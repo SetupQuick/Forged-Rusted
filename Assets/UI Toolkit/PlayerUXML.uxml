@@ -1,0 +1,39 @@
+<ui:UXML xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" noNamespaceSchemaLocation="../../UIElementsSchema/UIElements.xsd" editor-extension-mode="False">
+    <ui:VisualElement name="BarsBackground" style="flex-grow: 1; position: absolute; background-color: rgb(156, 156, 156); overflow: visible; width: 315px; height: 136px; bottom: 0; left: 0;"/>
+    <ui:VisualElement name="HealthBarBackground" style="flex-grow: 1; position: absolute; width: 300px; height: 50px; top: 956px; left: 4px; background-image: none; -unity-background-image-tint-color: rgb(255, 255, 255); background-color: rgb(0, 0, 0); display: flex; visibility: visible; overflow: visible; opacity: 1; background-size: 100% 100%; flex-direction: row;">
+        <ui:VisualElement name="HealthBarFill" style="flex-grow: 0; background-color: rgb(255, 0, 0); height: 100%; width: 100%; background-size: 100% 100%;">
+            <Bindings>
+                <ui:DataBinding property="style.width" data-source-path="HealthPercentage" binding-mode="ToTarget"/>
+            </Bindings>
+        </ui:VisualElement>
+        <ui:Label text="" name="HealthLabelNumber" data-source="project://database/Assets/Scripts/Scriptable_Objects/PlayerInfo.asset?fileID=11400000&amp;guid=b68d94059c3ce1146b3c2ccbaf648ab9&amp;type=2#PlayerInfo" data-source-path="" parse-escape-sequences="false" style="position: absolute; height: 100%; width: 100%; top: 0; -unity-text-align: middle-center; font-size: 40px; color: rgb(255, 255, 255); -unity-text-generator: standard;">
+            <Bindings>
+                <ui:DataBinding property="text" data-source-path="CurrentHealth" binding-mode="ToTarget"/>
+            </Bindings>
+        </ui:Label>
+    </ui:VisualElement>
+    <ui:VisualElement name="Hotbar" style="flex-grow: 1; bottom: 0; right: 340px; left: 600px; position: absolute; background-color: rgb(0, 0, 0); top: 967px; width: 860px; flex-direction: column; height: 100px;">
+        <ui:VisualElement name="HotbarIcon1" style="flex-grow: 1; background-color: rgb(255, 255, 255); flex-direction: column; width: 90px; height: 90px; flex-shrink: 1; bottom: 5px; top: 5px; left: 5px; right: 0; position: absolute; flex-wrap: nowrap;"/>
+        <ui:VisualElement name="HotbarIcon2" style="flex-grow: 1; background-color: rgb(255, 255, 255); flex-direction: column; width: 90px; height: 90px; flex-shrink: 1; bottom: 5px; top: 5px; left: 100px; right: 0; position: absolute; flex-wrap: nowrap;"/>
+        <ui:VisualElement name="HotbarIcon3" style="flex-grow: 1; background-color: rgb(255, 255, 255); flex-direction: column; width: 90px; height: 90px; flex-shrink: 1; bottom: 5px; top: 5px; left: 195px; right: 0; position: absolute; flex-wrap: nowrap;"/>
+        <ui:VisualElement name="HotbarIcon4" style="flex-grow: 1; background-color: rgb(255, 255, 255); flex-direction: column; width: 90px; height: 90px; flex-shrink: 1; bottom: 5px; top: 5px; left: 290px; right: 0; position: absolute; flex-wrap: nowrap;"/>
+        <ui:VisualElement name="HotbarIcon5" style="flex-grow: 1; background-color: rgb(255, 255, 255); flex-direction: column; width: 90px; height: 90px; flex-shrink: 1; bottom: 5px; top: 5px; left: 385px; right: 0; position: absolute; flex-wrap: nowrap;"/>
+        <ui:VisualElement name="HotbarIcon6" style="flex-grow: 1; background-color: rgb(255, 255, 255); flex-direction: column; width: 90px; height: 90px; flex-shrink: 1; bottom: 5px; top: 5px; left: 480px; right: 0; position: absolute; flex-wrap: nowrap;"/>
+        <ui:VisualElement name="HotbarIcon7" style="flex-grow: 1; background-color: rgb(255, 255, 255); flex-direction: column; width: 90px; height: 90px; flex-shrink: 1; bottom: 5px; top: 5px; left: 480px; right: 0; position: absolute; flex-wrap: nowrap;"/>
+        <ui:VisualElement name="HotbarIcon8" style="flex-grow: 1; background-color: rgb(255, 255, 255); flex-direction: column; width: 90px; height: 90px; flex-shrink: 1; bottom: 5px; top: 5px; left: 575px; right: 0; position: absolute; flex-wrap: nowrap;"/>
+        <ui:VisualElement name="HotbarIcon9" style="flex-grow: 1; background-color: rgb(255, 255, 255); flex-direction: column; width: 90px; height: 90px; flex-shrink: 1; bottom: 5px; top: 5px; left: 670px; right: 0; position: absolute; flex-wrap: nowrap;"/>
+        <ui:VisualElement name="HotbarIcon10" style="flex-grow: 1; background-color: rgb(255, 255, 255); flex-direction: column; width: 90px; height: 90px; flex-shrink: 1; bottom: 5px; top: 5px; left: 765px; right: 0; position: absolute; flex-wrap: nowrap;"/>
+    </ui:VisualElement>
+    <ui:VisualElement name="ManaBarBackground" style="flex-grow: 1; position: absolute; width: 300px; height: 50px; top: 1018px; left: 4px; background-image: none; -unity-background-image-tint-color: rgb(255, 255, 255); background-color: rgb(0, 0, 0); display: flex; visibility: visible; overflow: visible; opacity: 1; background-size: 100% 100%; flex-direction: row; align-self: auto;">
+        <ui:VisualElement name="ManaBarFill" style="flex-grow: 0; background-color: rgb(0, 183, 255); width: 100%; height: 100%; flex-shrink: 0;">
+            <Bindings>
+                <ui:DataBinding property="style.width" data-source-path="ManaPercentage" binding-mode="ToTarget"/>
+            </Bindings>
+        </ui:VisualElement>
+        <ui:Label text="" name="ManaLabelNumber" data-source="project://database/Assets/Scripts/Scriptable_Objects/PlayerInfo.asset?fileID=11400000&amp;guid=b68d94059c3ce1146b3c2ccbaf648ab9&amp;type=2#PlayerInfo" data-source-path="" parse-escape-sequences="false" style="position: absolute; height: 100%; width: 100%; top: 0; -unity-text-align: middle-center; font-size: 40px; color: rgb(255, 255, 255);">
+            <Bindings>
+                <ui:DataBinding property="text" data-source-path="CurrentMana" binding-mode="ToTarget"/>
+            </Bindings>
+        </ui:Label>
+    </ui:VisualElement>
+</ui:UXML>
