@@ -1,6 +1,10 @@
 // Transparent water for URP: vertex-colour tinted, small animated
-// ripples, sky reflections (reflection probe / skybox) with a Fresnel
-// falloff, sun glints, receives shadows, visible from above and below.
+// ripples and gentle waves (uv0.x = 1 on the open surface), reflections
+// of the day/night sky gradient with a Fresnel falloff, sun/moon glints,
+// receives shadows.
+// From below (camera under water) the surface is what real water looks
+// like from inside: a bright window straight up and a dark, mirror-like
+// ceiling at shallow angles (total internal reflection) - not the sky.
 Shader "ForgedRusted/Voxel Water"
 {
     Properties
@@ -54,11 +58,14 @@ Shader "ForgedRusted/Voxel Water"
             half4 _VoxelSkyColor;
             half4 _VoxelGroundColor;
 
+            #include "VoxelCommon.hlsl"
+
             struct Attributes
             {
                 float4 positionOS : POSITION;
                 float3 normalOS : NORMAL;
                 half4 color : COLOR;
+                float2 uv : TEXCOORD0;
             };
 
             struct Varyings
@@ -74,10 +81,16 @@ Shader "ForgedRusted/Voxel Water"
             {
                 Varyings output;
 
-                VertexPositionInputs position = GetVertexPositionInputs(input.positionOS.xyz);
+                float3 positionWS = TransformObjectToWorld(input.positionOS.xyz);
 
-                output.positionCS = position.positionCS;
-                output.positionWS = position.positionWS;
+                // Slow swell on the open surface (only vertices marked by
+                // the mesher, so edges against blocks stay put).
+                float t = _VoxelWind.w;
+                float swell = sin(positionWS.x * 0.35 + t * 1.2) * 0.5 + sin(positionWS.z * 0.42 - t * 0.9) * 0.5;
+                positionWS.y += swell * 0.035 * input.uv.x * (0.5 + _VoxelWind.z * 0.5);
+
+                output.positionCS = TransformWorldToHClip(positionWS);
+                output.positionWS = positionWS;
                 output.normalWS = TransformObjectToWorldNormal(input.normalOS);
 
                 half4 color = input.color;
@@ -86,7 +99,7 @@ Shader "ForgedRusted/Voxel Water"
                 #endif
                 output.color = color * _Tint;
 
-                output.fogFactor = ComputeFogFactor(position.positionCS.z);
+                output.fogFactor = ComputeFogFactor(output.positionCS.z);
                 return output;
             }
 
@@ -124,9 +137,14 @@ Shader "ForgedRusted/Voxel Water"
                 half diffuse = saturate(dot(normal, light.direction));
                 half3 body = input.color.rgb * (ambient * 0.8 + light.color * diffuse * attenuation * 0.6);
 
-                // Sky reflection from the reflection probe / skybox.
+                // Reflection of the sky gradient (follows the day/night
+                // cycle; a baked reflection probe would not).
                 half3 reflected = reflect(-viewDirection, normal);
-                half3 reflection = GlossyEnvironmentReflection(reflected, 0.05h, 1.0h);
+                half3 reflection;
+                if (_VoxelSkyZenith.a > 0)
+                    reflection = lerp(_VoxelSkyHorizon.rgb, _VoxelSkyZenith.rgb, saturate(reflected.y * 1.5));
+                else
+                    reflection = GlossyEnvironmentReflection(reflected, 0.05h, 1.0h);
 
                 half3 color = lerp(body, reflection, saturate(fresnel + 0.15) * _ReflectionStrength);
 
@@ -139,14 +157,35 @@ Shader "ForgedRusted/Voxel Water"
 
                 half alpha = saturate(_Opacity + fresnel * 0.3) * _Tint.a;
 
-                // Seen from below, the surface is a bright, mostly opaque
-                // ceiling (like total internal reflection) instead of a
-                // clear window to the sky.
-                if (!isFrontFace)
+                if (!isFrontFace && _VoxelUnderwater.x <= 0)
                 {
+                    // Back faces seen from above water (rare: water next
+                    // to an air gap). Mostly opaque, like before.
                     color = lerp(input.color.rgb * (ambient * 0.5 + light.color * 0.2), color, 0.2);
                     color = MixFog(color, input.fogFactor);
                     alpha = 0.85 * _Tint.a;
+                }
+                else if (!isFrontFace)
+                {
+                    // From inside the water. Within ~48 degrees of straight
+                    // up light comes through (Snell's window), tinted by
+                    // the water; further out the surface mirrors the dark
+                    // water below. Opaque, so the sky never shows through.
+                    // normal is the rippled one turned towards the camera,
+                    // so the edge of the window wobbles with the waves.
+                    half up = saturate(dot(viewDirection, normal));
+                    half window = smoothstep(0.64, 0.74, up);
+
+                    half3 deep = unity_FogColor.rgb * 0.45;
+                    half3 lit = (_VoxelSkyZenith.a > 0 ? _VoxelSkyZenith.rgb : ambient) * 0.6 + light.color * 0.35;
+                    lit *= input.color.rgb * 1.6 + 0.2;
+                    lit = lerp(lit, unity_FogColor.rgb * 2.5, 0.35); // seen through the water
+
+                    // Ripples make the window wobble and sparkle.
+                    half sparkle = pow(saturate(dot(-normal, light.direction)), 64) * attenuation;
+                    color = lerp(deep, lit, window) + light.color * sparkle * window * 0.6;
+                    color = MixFog(color, input.fogFactor);
+                    alpha = 1.0;
                 }
 
                 return half4(color, alpha);

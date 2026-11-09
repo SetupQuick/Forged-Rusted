@@ -137,8 +137,10 @@ namespace World.Streaming
             // Only machines that render (not a dedicated server).
             if (!distanceFog ||
                 (runtime != null && runtime.IsRunning && !runtime.RunsClient) ||
-                _appliedFogDistance == renderDistance)
+                _appliedFogDistance == renderDistance ||
+                World.Rendering.UnderwaterEffect.CameraUnderwater)
             {
+                // Under water the underwater fog owns these; applied after surfacing.
                 return;
             }
 
@@ -148,7 +150,11 @@ namespace World.Streaming
 
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.Linear;
-            RenderSettings.fogColor = fogColor;
+
+            // With the day/night cycle running, VoxelAtmosphere sets the
+            // colour every frame (it follows the horizon).
+            if (FindFirstObjectByType<World.Rendering.VoxelAtmosphere>() == null)
+                RenderSettings.fogColor = fogColor;
             RenderSettings.fogStartDistance = end * fogStart;
             RenderSettings.fogEndDistance = end;
         }

@@ -112,9 +112,29 @@ namespace Game
             VoxelAtmosphere atmosphere = AtmosphereCache.Get();
             if (atmosphere != null && (_dirty || atmosphere != _lastAtmosphere))
             {
-                atmosphere.SetShadowDistance(GameSettings.ShadowDistance(GameSettings.Shadows));
+                ShadowParameters shadows = GameSettings.GetShadowParameters(GameSettings.Shadows);
+                atmosphere.SetShadows(shadows.Distance, shadows.Cascades, shadows.Resolution, shadows.Soft);
                 atmosphere.SetPostProcessing(GameSettings.PostProcessing);
+                atmosphere.SetAntialiasing(
+                    GameSettings.AntiAliasing == AntiAliasing.Smaa ? UnityEngine.Rendering.Universal.AntialiasingMode.SubpixelMorphologicalAntiAliasing :
+                    GameSettings.AntiAliasing == AntiAliasing.Fxaa ? UnityEngine.Rendering.Universal.AntialiasingMode.FastApproximateAntialiasing :
+                    UnityEngine.Rendering.Universal.AntialiasingMode.None);
                 _lastAtmosphere = atmosphere;
+            }
+
+            World.WorldManager world = World.WorldManager.Active;
+            if (world != null && world.DetailRadius != GameSettings.GrassDistance)
+                world.DetailRadius = GameSettings.GrassDistance;
+
+            if (_dirty)
+            {
+                CloudLayer.Enabled = GameSettings.Clouds;
+                VoxelAtmosphere.WindStrength = GameSettings.Wind ? 1f : 0f;
+
+                // Fewer pixels = much less GPU work; UI stays sharp (overlay canvas).
+                UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset urp = RuntimePipeline.Asset;
+                if (urp != null && !Mathf.Approximately(urp.renderScale, GameSettings.RenderScale))
+                    urp.renderScale = GameSettings.RenderScale;
             }
 
             _dirty = false;

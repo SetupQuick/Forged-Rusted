@@ -42,6 +42,9 @@ namespace World.Rendering
         /// <summary>Combined chunk versions the current mesh was built from.</summary>
         public long BuiltFromVersion { get; private set; }
 
+        /// <summary>The current mesh includes grass and flowers.</summary>
+        public bool HasDetail { get; private set; }
+
         /// <summary>True once the collider matches the latest mesh.</summary>
         public bool ColliderUpToDate => _bakingMesh == null;
 
@@ -81,7 +84,9 @@ namespace World.Rendering
             if (liquidMaterial != null)
                 _liquid = CreateChild("Water", liquidMaterial, ShadowCastingMode.Off);
 
-            _detail = CreateChild("Details", solidMaterial, ShadowCastingMode.On);
+            // Grass/flowers cast no shadows: thousands of tiny boxes are
+            // expensive in the shadow pass and the shadow is barely visible.
+            _detail = CreateChild("Details", solidMaterial, ShadowCastingMode.Off);
         }
 
         private Child CreateChild(string childName, Material material, ShadowCastingMode shadows)
@@ -124,7 +129,39 @@ namespace World.Rendering
             Release(previous, null);
 
             UploadChild(_liquid, result.Liquid, "Water");
-            UploadChild(_detail, result.Detail, "Details");
+
+            if (result.HasDetail)
+                UploadChild(_detail, result.Detail, "Details");
+            else
+                DropDetail();
+
+            HasDetail = result.HasDetail && _detail != null;
+        }
+
+        /// <summary>Shows or hides grass and flowers (by distance).</summary>
+        public void SetDetailVisible(bool visible)
+        {
+            if (_detail == null)
+                return;
+
+            bool show = visible && _detail.Mesh != null && _detail.Mesh.vertexCount > 0;
+
+            if (_detail.Object.activeSelf != show)
+                _detail.Object.SetActive(show);
+        }
+
+        /// <summary>Frees the grass/flower mesh of a chunk that is now far away.</summary>
+        public void DropDetail()
+        {
+            HasDetail = false;
+
+            if (_detail == null || _detail.Mesh == null)
+                return;
+
+            Destroy(_detail.Mesh);
+            _detail.Mesh = null;
+            _detail.Filter.sharedMesh = null;
+            _detail.Object.SetActive(false);
         }
 
         /// <summary>
@@ -211,12 +248,12 @@ namespace World.Rendering
             if (child.Mesh != null)
                 Destroy(child.Mesh);
 
-            child.Mesh = CreateMesh(data, suffix);
+            child.Mesh = CreateMesh(data, suffix, keepReadable: false);
             child.Filter.sharedMesh = child.Mesh;
             child.Object.SetActive(child.Mesh.vertexCount > 0);
         }
 
-        private Mesh CreateMesh(ChunkMeshData data, string suffix)
+        private Mesh CreateMesh(ChunkMeshData data, string suffix, bool keepReadable = true)
         {
             var mesh = new Mesh
             {
@@ -233,7 +270,18 @@ namespace World.Rendering
             mesh.SetVertices(data.Vertices);
             mesh.SetNormals(data.Normals);
             mesh.SetColors(data.Colors);
+
+            // uv0.x = wind weight (leaves, grass tips, water surface).
+            if (data.Uvs.Count == data.Vertices.Count)
+                mesh.SetUVs(0, data.Uvs);
+
             mesh.SetTriangles(data.Triangles, 0, true);
+
+            // Water and grass have no collider, so their CPU-side copy can
+            // be freed after upload (saves system memory). The solid mesh
+            // stays readable for Physics.BakeMesh / the MeshCollider.
+            if (!keepReadable)
+                mesh.UploadMeshData(true);
 
             return mesh;
         }

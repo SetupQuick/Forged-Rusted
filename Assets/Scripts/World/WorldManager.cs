@@ -69,6 +69,14 @@ namespace World
         [Min(0)]
         private int maxConcurrentJobs;
 
+        [Tooltip("Chunks around the camera that show grass and flowers. " +
+                 "They are the most expensive part of a chunk to draw " +
+                 "(about 40% of the triangles), and are barely visible " +
+                 "further away. Set from the graphics settings.")]
+        [SerializeField]
+        [Range(0, 8)]
+        private int detailRadius = 3;
+
         private readonly Dictionary<ChunkCoord, ChunkData> _chunks =
             new Dictionary<ChunkCoord, ChunkData>();
 
@@ -113,6 +121,8 @@ namespace World
         private bool _renderingEnabled = true;
         private int _runningJobs;
         private int _epoch;
+        private ChunkCoord _detailCenter;
+        private bool _detailCenterKnown;
 
         public WorldSettings Settings =>
             settings;
@@ -135,6 +145,21 @@ namespace World
 
         public int PendingJobCount =>
             _runningJobs;
+
+        /// <summary>Chunks around the camera with grass and flowers (0 = none).</summary>
+        public int DetailRadius
+        {
+            get => detailRadius;
+            set
+            {
+                value = Mathf.Clamp(value, 0, 8);
+                if (value == detailRadius)
+                    return;
+
+                detailRadius = value;
+                _detailCenterKnown = false; // re-evaluate every chunk
+            }
+        }
 
         /// <summary>Metres per voxel.</summary>
         public float VoxelSize =>
@@ -252,9 +277,67 @@ namespace World
                 PublishServerWorldInfo();
             }
 
+            WorldClock.Advance(Time.deltaTime);
+            UpdateDetailCenter();
             ProcessCompletedJobs();
             ScheduleJobs();
         }
+
+        // ------------------------------------------------------------
+        // Grass/flower distance
+        // ------------------------------------------------------------
+
+        /// <summary>
+        /// Grass is built for chunks within detailRadius + 1 of the camera
+        /// and shown within detailRadius; the extra ring means walking
+        /// around does not remesh chunks right at the edge every time.
+        /// Chunks that move far away drop their grass mesh to save memory.
+        /// </summary>
+        private void UpdateDetailCenter()
+        {
+            if (!_renderingEnabled)
+                return;
+
+            Camera camera = Camera.main;
+            if (camera == null)
+                return;
+
+            ChunkCoord center = WorldPositionToChunk(camera.transform.position);
+
+            if (_detailCenterKnown && center.Equals(_detailCenter))
+                return;
+
+            _detailCenter = center;
+            _detailCenterKnown = true;
+
+            foreach (KeyValuePair<ChunkCoord, ChunkView> pair in _views)
+            {
+                ChunkView view = pair.Value;
+                if (view == null)
+                    continue;
+
+                int distance = DetailDistance(pair.Key);
+
+                // Rebuilt one ring early, so grass is ready before it is shown.
+                if (detailRadius > 0 && distance <= detailRadius + 1 && !view.HasDetail)
+                    _dirty.Add(pair.Key);
+                else if (distance > detailRadius + 2 && view.HasDetail)
+                    view.DropDetail();
+
+                view.SetDetailVisible(distance <= detailRadius);
+            }
+        }
+
+        private int DetailDistance(ChunkCoord coord)
+        {
+            if (!_detailCenterKnown)
+                return 0;
+
+            return Math.Max(Math.Abs(coord.X - _detailCenter.X), Math.Abs(coord.Z - _detailCenter.Z));
+        }
+
+        private bool WantsDetail(ChunkCoord coord) =>
+            _renderingEnabled && detailRadius > 0 && DetailDistance(coord) <= detailRadius + 1;
 
         // ------------------------------------------------------------
         // Seed / initialisation
@@ -323,6 +406,9 @@ namespace World
             TerrainConfig config = settings.CreateConfig(seed);
             _generator = new NoiseWorldGenerator(config);
 
+            // Clients get the server's clock with the first TimeSync.
+            WorldClock.Reset(settings.DayLengthSeconds, settings.StartTimeOfDay);
+
             if (_renderingEnabled &&
                 createAtmosphere &&
                 FindFirstObjectByType<VoxelAtmosphere>() == null)
@@ -337,6 +423,10 @@ namespace World
             // Underwater fog when the camera dives.
             if (_renderingEnabled && GetComponent<UnderwaterEffect>() == null)
                 gameObject.AddComponent<UnderwaterEffect>();
+
+            // Voxel clouds drifting with the world clock.
+            if (_renderingEnabled && createAtmosphere && GetComponent<CloudLayer>() == null)
+                gameObject.AddComponent<CloudLayer>();
 
             Debug.Log(
                 $"World initialised: seed {seed}, " +
@@ -488,9 +578,10 @@ namespace World
                 GetOrCreateChunk(new ChunkCoord(coord.X + dx, coord.Z + dz));
 
             ChunkNeighborhood neighbourhood = CollectNeighbourhood(coord);
-            ChunkMeshResult result = ChunkMeshBuilder.Build(neighbourhood, _renderingEnabled, Seed, VoxelSize);
+            ChunkMeshResult result = ChunkMeshBuilder.Build(neighbourhood, _renderingEnabled, Seed, VoxelSize, WantsDetail(coord));
 
             ApplyMesh(result, colliderImmediately: true);
+            ChunkMeshData.Return(result);
         }
 
         /// <summary>
@@ -979,6 +1070,7 @@ namespace World
             bool buildLiquid = _renderingEnabled;
             long seed = Seed;
             float voxelSize = VoxelSize;
+            bool includeDetail = WantsDetail(coord);
             ChunkNeighborhood neighbourhood = CollectNeighbourhood(coord);
 
             Task.Run(() =>
@@ -992,7 +1084,7 @@ namespace World
 
                 try
                 {
-                    result.Mesh = ChunkMeshBuilder.Build(neighbourhood, buildLiquid, seed, voxelSize);
+                    result.Mesh = ChunkMeshBuilder.Build(neighbourhood, buildLiquid, seed, voxelSize, includeDetail);
                 }
                 catch (Exception exception)
                 {
@@ -1017,7 +1109,10 @@ namespace World
                     break;
 
                 if (result.Epoch != _epoch)
+                {
+                    ChunkMeshData.Return(result.Mesh);
                     continue;
+                }
 
                 if (result.Kind == JobKind.Mesh && uploads >= maxMeshUploadsPerFrame)
                 {
@@ -1033,6 +1128,7 @@ namespace World
                     Debug.LogException(result.Error);
                     _generating.Remove(result.Coord);
                     _meshing.Remove(result.Coord);
+                    ChunkMeshData.Return(result.Mesh);
                     continue;
                 }
 
@@ -1049,11 +1145,14 @@ namespace World
                 {
                     _meshing.Remove(result.Coord);
 
-                    if (!_wantedViewSet.Contains(result.Coord))
-                        continue;
+                    if (_wantedViewSet.Contains(result.Coord))
+                    {
+                        ApplyMesh(result.Mesh, colliderImmediately: false);
+                        uploads++;
+                    }
 
-                    ApplyMesh(result.Mesh, colliderImmediately: false);
-                    uploads++;
+                    // The lists are reused by the next meshing job.
+                    ChunkMeshData.Return(result.Mesh);
                 }
             }
         }
@@ -1081,6 +1180,7 @@ namespace World
             }
 
             view.ApplyMesh(result, colliderImmediately);
+            view.SetDetailVisible(DetailDistance(coord) <= detailRadius);
 
             // Something changed while the mesh was being built.
             ChunkNeighborhood current = CollectNeighbourhood(coord);

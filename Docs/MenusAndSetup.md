@@ -49,7 +49,8 @@ with a message.
 
 | Tab | Settings |
 |-----|----------|
-| Graphics | display mode (fullscreen / borderless / window), resolution, V-Sync, frame rate limit, quality preset, render distance (4-16 chunks), shadows (off/low/medium/high), post-processing, field of view |
+| Display | display mode (fullscreen / borderless / window), resolution, V-Sync, frame rate limit, field of view, render pipeline profile |
+| Graphics | preset (Low / Medium / High / Ultra / Custom), render distance (4-16 chunks), shadows (off/low/medium/high), grass distance, clouds, wind, post-processing, render scale, anti-aliasing - see [Performance.md](Performance.md) |
 | Audio | master volume, effects volume |
 | Controls | mouse sensitivity, invert Y (key list on the Controls screen) |
 | Interface | FPS counter, network statistics (F3) |

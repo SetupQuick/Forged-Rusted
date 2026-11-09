@@ -260,6 +260,41 @@ namespace Networking
             }
         }
 
+        // --------------------------------------------------------------
+        // Time of day (server -> clients)
+        // --------------------------------------------------------------
+
+        public static void WriteTimeSync(PacketWriter writer, double worldSeconds, float dayLengthSeconds, float startTimeOfDay)
+        {
+            writer.Write(worldSeconds);
+            writer.Write(dayLengthSeconds);
+            writer.Write(startTimeOfDay);
+        }
+
+        public static bool TryReadTimeSync(byte[] payload, out double worldSeconds, out float dayLengthSeconds, out float startTimeOfDay)
+        {
+            worldSeconds = 0;
+            dayLengthSeconds = 0;
+            startTimeOfDay = 0;
+
+            try
+            {
+                var reader = new PacketReader(payload);
+                worldSeconds = reader.ReadDouble();
+                dayLengthSeconds = reader.ReadFloat();
+                startTimeOfDay = reader.ReadFloat();
+
+                return reader.Remaining == 0 &&
+                       !double.IsNaN(worldSeconds) && !double.IsInfinity(worldSeconds) && worldSeconds >= 0 &&
+                       dayLengthSeconds >= 10f && dayLengthSeconds < 1e6f &&
+                       startTimeOfDay >= 0f && startTimeOfDay <= 1f;
+            }
+            catch (System.InvalidOperationException)
+            {
+                return false;
+            }
+        }
+
         private static void WriteStack(PacketWriter writer, ItemStack stack)
         {
             writer.Write(stack.IsEmpty ? (ushort)0 : ItemDatabase.GetNetworkId(stack.Item));

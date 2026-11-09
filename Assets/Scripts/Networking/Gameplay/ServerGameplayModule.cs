@@ -32,6 +32,11 @@ namespace Networking
         private readonly List<BlockChange> _pendingBroadcast = new List<BlockChange>();
         private bool _subscribedToWorld;
         private bool _disposed;
+        private double _nextTimeSync;
+
+        // Clocks drift very little; this keeps late changes (e.g. a time
+        // command) visible quickly without costing bandwidth.
+        private const double TimeSyncInterval = 5.0;
 
         private sealed class PlayerState
         {
@@ -95,6 +100,32 @@ namespace Networking
 
                 BroadcastEquipmentIfChanged(state);
             }
+
+            if (now >= _nextTimeSync)
+            {
+                _nextTimeSync = now + TimeSyncInterval;
+
+                foreach (PlayerState state in _players.Values)
+                    SendTime(state.Peer);
+            }
+        }
+
+        private void SendTime(Peer peer, bool reliable = false)
+        {
+            if (peer.State != ServerPeerState.Connected)
+                return;
+
+            double seconds = global::World.WorldClock.WorldSeconds;
+            float dayLength = global::World.WorldClock.DayLengthSeconds;
+            float start = global::World.WorldClock.StartTimeOfDay;
+
+            // Periodic ones may be lost (the next comes in a few seconds);
+            // the first one on joining is reliable.
+            _server.Send(
+                peer,
+                NetworkMessageType.TimeSync,
+                writer => GameplayMessages.WriteTimeSync(writer, seconds, dayLength, start),
+                reliable ? NetworkDelivery.ReliableOrdered : NetworkDelivery.UnreliableSequenced);
         }
 
         /// <summary>Tells everyone when a player's held item changed.</summary>
@@ -170,6 +201,7 @@ namespace Networking
             // Start right away so edits arrive right after the world seed.
             SendEditBacklog(state);
             SendInventory(state);
+            SendTime(peer, reliable: true);
 
             // What everyone else is holding.
             foreach (PlayerState other in _players.Values)

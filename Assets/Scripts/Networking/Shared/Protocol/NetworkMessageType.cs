@@ -33,6 +33,9 @@ namespace Networking
         WorldEdits = 17,
 
         // Server -> clients: what a player is holding (for hands/avatars).
-        Equipment = 18
+        Equipment = 18,
+
+        // Server -> clients: world clock (day/night, clouds), every few seconds.
+        TimeSync = 19
     }
 }

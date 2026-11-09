@@ -77,7 +77,56 @@ namespace World.Rendering
         public readonly List<Color32> Colors = new List<Color32>();
         public readonly List<int> Triangles = new List<int>();
 
+        /// <summary>
+        /// UV0.x = how much wind moves this vertex (0 = fixed, 1 = tips of
+        /// grass / water surface). Filled for chunk meshes only.
+        /// </summary>
+        public readonly List<Vector2> Uvs = new List<Vector2>();
+
         public bool IsEmpty => Vertices.Count == 0;
+
+        public const int UvBytesPerVertex = 8;
+
+        // Buffers are reused: building a chunk mesh used to allocate ~3 MB
+        // of lists that became garbage right after upload (GC stutter).
+        private static readonly System.Collections.Concurrent.ConcurrentBag<ChunkMeshData> Pool =
+            new System.Collections.Concurrent.ConcurrentBag<ChunkMeshData>();
+
+        // ~0.5-1 MB each when warm; enough for the concurrent meshing jobs.
+        private const int MaxPooled = 24;
+
+        public static ChunkMeshData Rent()
+        {
+            if (Pool.TryTake(out ChunkMeshData data))
+                return data;
+
+            return new ChunkMeshData();
+        }
+
+        /// <summary>Gives the buffers back once the mesh has been uploaded.</summary>
+        public static void Return(ChunkMeshData data)
+        {
+            if (data == null || Pool.Count >= MaxPooled)
+                return;
+
+            data.Vertices.Clear();
+            data.Normals.Clear();
+            data.Colors.Clear();
+            data.Triangles.Clear();
+            data.Uvs.Clear();
+            Pool.Add(data);
+        }
+
+        public static void Return(ChunkMeshResult result)
+        {
+            if (result == null)
+                return;
+
+            Return(result.Solid);
+            Return(result.Liquid);
+            Return(result.Detail);
+            result.Solid = result.Liquid = result.Detail = null;
+        }
     }
 
     public sealed class ChunkMeshResult
@@ -88,6 +137,9 @@ namespace World.Rendering
 
         /// <summary>Grass tufts and flowers: rendered, no collider.</summary>
         public ChunkMeshData Detail;
+
+        /// <summary>Built with grass/flowers (near the player).</summary>
+        public bool HasDetail;
         public long SourceVersion;
     }
 
@@ -138,16 +190,19 @@ namespace World.Rendering
             new[] { new Vector3Int(1, 0, 0), new Vector3Int(0, 0, 0), new Vector3Int(0, 1, 0), new Vector3Int(1, 1, 0) }
         };
 
-        public static ChunkMeshResult Build(ChunkNeighborhood neighborhood, bool buildLiquid, long seed, float voxelSize = 1f)
+        /// <param name="buildLiquid">Water and grass meshes (not needed on a dedicated server).</param>
+        /// <param name="includeDetail">Grass tufts and flowers; off for distant chunks.</param>
+        public static ChunkMeshResult Build(ChunkNeighborhood neighborhood, bool buildLiquid, long seed, float voxelSize = 1f, bool includeDetail = true)
         {
             ChunkData chunk = neighborhood.Center;
 
             var result = new ChunkMeshResult
             {
                 Coord = chunk.Coord,
-                Solid = new ChunkMeshData(),
-                Liquid = buildLiquid ? new ChunkMeshData() : null,
-                Detail = buildLiquid ? new ChunkMeshData() : null,
+                Solid = ChunkMeshData.Rent(),
+                Liquid = buildLiquid ? ChunkMeshData.Rent() : null,
+                Detail = buildLiquid && includeDetail ? ChunkMeshData.Rent() : null,
+                HasDetail = buildLiquid && includeDetail,
                 SourceVersion = neighborhood.CombinedVersion
             };
 
@@ -208,7 +263,7 @@ namespace World.Rendering
                         continue;
 
                     Color32 color = FaceColor(definition, biome, (Face)f, variation);
-                    AddSolidFace(neighborhood, result.Solid, (Face)f, x, y, z, color);
+                    AddSolidFace(neighborhood, result.Solid, (Face)f, x, y, z, color, IsLeaves(block) ? 0.35f : 0f);
                 }
             }
 
@@ -328,6 +383,9 @@ namespace World.Rendering
                     // Alpha = ambient occlusion: darker at the ground.
                     byte ao = c.y == 0 ? (byte)140 : (byte)255;
                     mesh.Colors.Add(new Color32(color.r, color.g, color.b, ao));
+
+                    // Tips sway in the wind, the base stays put.
+                    mesh.Uvs.Add(new Vector2(c.y == 0 ? 0f : 1f, 0f));
                 }
 
                 mesh.Triangles.Add(start + 0);
@@ -371,6 +429,12 @@ namespace World.Rendering
                 255);
         }
 
+        private static bool IsLeaves(BlockId block)
+        {
+            return block == BlockId.Leaves || block == BlockId.PineLeaves ||
+                   block == BlockId.AutumnLeaves || block == BlockId.RedLeaves;
+        }
+
         private static void AddSolidFace(
             ChunkNeighborhood neighborhood,
             ChunkMeshData mesh,
@@ -378,7 +442,8 @@ namespace World.Rendering
             int x,
             int y,
             int z,
-            Color32 color)
+            Color32 color,
+            float wind)
         {
             Vector3Int normal = FaceNormals[(int)face];
             Vector3Int[] corners = FaceCorners[(int)face];
@@ -406,6 +471,7 @@ namespace World.Rendering
 
                 // RGB = albedo, A = ambient occlusion (applied in the shader).
                 mesh.Colors.Add(new Color32(color.r, color.g, color.b, (byte)(255 * shade)));
+                mesh.Uvs.Add(new Vector2(wind, 0f));
             }
 
             // Flip the quad's diagonal so AO gradients do not look skewed.
@@ -506,6 +572,9 @@ namespace World.Rendering
                     mesh.Vertices.Add(new Vector3(x + corner.x, y + cy, z + corner.z));
                     mesh.Normals.Add(n);
                     mesh.Colors.Add(color);
+
+                    // Only the open surface moves with the waves.
+                    mesh.Uvs.Add(new Vector2(corner.y == 1 && !liquidAbove ? 1f : 0f, 0f));
                 }
 
                 mesh.Triangles.Add(start + 0);

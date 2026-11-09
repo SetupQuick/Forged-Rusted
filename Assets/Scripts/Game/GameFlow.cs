@@ -197,6 +197,19 @@ namespace Game
         {
             Keyboard keyboard = Keyboard.current;
 
+            if (BenchmarkRunner.Running)
+            {
+                // The benchmark flies its own camera.
+                RemoveMenuCamera();
+                Cursor.lockState = CursorLockMode.None;
+                Cursor.visible = true;
+
+                if (keyboard != null && keyboard.escapeKey.wasPressedThisFrame)
+                    _benchmark?.Cancel();
+
+                return;
+            }
+
             if (keyboard != null && keyboard.escapeKey.wasPressedThisFrame && !InventoryUI.EscapeHandledThisFrame)
                 OnEscape();
 
@@ -372,6 +385,7 @@ namespace Game
             MenuWidgets.Button(column, "Join Game", ShowJoinScreen, height: 64f);
             MenuWidgets.Button(column, "Settings", () => ShowSettings(() => ShowMainMenu()), height: 64f);
             MenuWidgets.Button(column, "Controls", () => ShowControls(() => ShowMainMenu()), height: 64f);
+            MenuWidgets.Button(column, "Benchmark", () => StartBenchmark(), height: 64f);
             MenuWidgets.Button(column, "Quit", Quit, height: 64f);
 
             string problems = GameBootstrap.SceneProblems;
@@ -535,6 +549,65 @@ namespace Game
             ("Network statistics", "F3")
         };
 
+        // ------------------------------------------------------------
+        // Benchmark
+        // ------------------------------------------------------------
+
+        private BenchmarkRunner _benchmark;
+
+        /// <summary>Runs the graphics benchmark over the menu's offline world.</summary>
+        public void StartBenchmark(bool quitWhenDone = false)
+        {
+            NetworkRuntime runtime = NetworkRuntime.Current;
+            if (runtime != null && runtime.IsRunning)
+            {
+                ShowMainMenu("Leave the game to run the benchmark.");
+                return;
+            }
+
+            _back.Clear();
+            RectTransform screen = NewScreen(0f);
+
+            TextMeshProUGUI label = UiBuilder.Text("Running", screen, 24, TextAlignmentOptions.TopLeft, UiBuilder.TextColor);
+            UiBuilder.Place(label.rectTransform, new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(30f, -24f), new Vector2(900f, 40f));
+            UiBuilder.AddOutline(label, new Color(0f, 0f, 0f, 0.7f), 2f);
+            label.text = "Benchmark running: Low, Medium, High, Ultra (about 2 minutes). Esc to cancel.";
+
+            // Let the world behind the label render (the label itself does not block anything).
+            screen.GetComponent<Image>().raycastTarget = false;
+
+            _benchmark = BenchmarkRunner.Begin(summary =>
+            {
+                _benchmark = null;
+
+                if (quitWhenDone)
+                {
+                    Quit();
+                    return;
+                }
+
+                ShowBenchmarkResults(summary);
+            });
+        }
+
+        private void ShowBenchmarkResults(string summary)
+        {
+            RectTransform screen = NewScreen(0.7f);
+            _back.Push(() => ShowMainMenu());
+
+            Image panel = MenuWidgets.Panel(screen, new Vector2(1500f, 760f));
+            RectTransform column = MenuWidgets.Column(panel.rectTransform, 10f, 1420f);
+            UiBuilder.Place(column, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -28f), new Vector2(1420f, 0f));
+
+            MenuWidgets.Header(column, "Benchmark results", 34f);
+
+            TextMeshProUGUI text = UiBuilder.Text("Results", column, 18, TextAlignmentOptions.TopLeft, UiBuilder.TextColor);
+            text.rectTransform.sizeDelta = new Vector2(1420f, 560f);
+            text.text = "<mspace=0.6em>" + summary + "</mspace>";
+
+            MenuWidgets.Button(column, "Back", () => ShowMainMenu(), primary: true);
+        }
+
         private void ShowSettings(Action back)
         {
             ShowSettingsTab(back, 0);
@@ -564,7 +637,7 @@ namespace Game
             tabLayout.childForceExpandWidth = true;
             tabLayout.childControlHeight = true;
 
-            string[] names = { "Graphics", "Audio", "Controls", "Interface" };
+            string[] names = { "Display", "Graphics", "Audio", "Controls", "Interface" };
             for (int i = 0; i < names.Length; i++)
             {
                 int index = i;
@@ -573,9 +646,10 @@ namespace Game
 
             switch (tab)
             {
-                case 0: GraphicsSettings(column); break;
-                case 1: AudioSettings(column); break;
-                case 2: ControlSettings(column); break;
+                case 0: DisplaySettings(column); break;
+                case 1: GraphicsSettings(column, () => { _back.Pop(); ShowSettingsTab(back, 1); }); break;
+                case 2: AudioSettings(column); break;
+                case 3: ControlSettings(column); break;
                 default: InterfaceSettings(column); break;
             }
 
@@ -597,7 +671,7 @@ namespace Game
             MenuWidgets.Button(buttons, "Back", () => _back.Pop()(), primary: true);
         }
 
-        private static void GraphicsSettings(Transform column)
+        private static void DisplaySettings(Transform column)
         {
             MenuWidgets.Selector(column, "Display mode", new[] { "Fullscreen", "Borderless window", "Window" }, (int)GameSettings.DisplayMode, i =>
             {
@@ -634,30 +708,72 @@ namespace Game
                 GameSettings.Apply();
             });
 
+            MenuWidgets.Slider(column, "Field of view", 50f, 110f, GameSettings.FieldOfView,
+                v => $"{Mathf.RoundToInt(v)}°", v => { GameSettings.FieldOfView = v; GameSettings.Apply(); }, wholeNumbers: true);
+
             string[] qualities = QualitySettings.names;
-            if (qualities.Length > 0)
+            if (qualities.Length > 1)
             {
                 int quality = GameSettings.QualityLevel >= 0 ? GameSettings.QualityLevel : QualitySettings.GetQualityLevel();
-                MenuWidgets.Selector(column, "Quality preset", qualities, quality, i =>
+                MenuWidgets.Selector(column, "Render pipeline profile", qualities, quality, i =>
                 {
                     GameSettings.QualityLevel = i;
                     GameSettings.Apply();
                 });
             }
+        }
+
+        private static void GraphicsSettings(Transform column, Action refresh)
+        {
+            // A preset sets everything below; changing one option makes it "Custom".
+            string[] presets = { "Low", "Medium", "High", "Ultra", "Custom" };
+            MenuWidgets.Selector(column, "Graphics preset", presets, (int)GameSettings.Preset, i =>
+            {
+                if (i == (int)GraphicsPreset.Custom)
+                {
+                    GameSettings.MarkCustom();
+                    return;
+                }
+
+                GameSettings.ApplyPresetValues((GraphicsPreset)i);
+                GameSettings.Apply();
+                refresh(); // show the new values
+            });
 
             MenuWidgets.Slider(column, "Render distance", GameSettings.MinRenderDistance, GameSettings.MaxRenderDistance, GameSettings.RenderDistance,
-                v => $"{(int)v} chunks", v => { GameSettings.RenderDistance = (int)v; GameSettings.Apply(); }, wholeNumbers: true);
+                v => $"{(int)v} chunks ({(int)v * 16} m)", v => { GameSettings.RenderDistance = (int)v; GameSettings.MarkCustom(); GameSettings.Apply(); }, wholeNumbers: true);
 
             MenuWidgets.Selector(column, "Shadows", new[] { "Off", "Low", "Medium", "High" }, (int)GameSettings.Shadows, i =>
             {
                 GameSettings.Shadows = (ShadowQuality)i;
+                GameSettings.MarkCustom();
                 GameSettings.Apply();
             });
 
-            MenuWidgets.Toggle(column, "Post-processing (bloom, colour)", GameSettings.PostProcessing, v => { GameSettings.PostProcessing = v; GameSettings.Apply(); });
+            MenuWidgets.Slider(column, "Grass and flowers", 0, GameSettings.MaxGrassDistance, GameSettings.GrassDistance,
+                v => (int)v == 0 ? "Off" : $"{(int)v} chunks", v => { GameSettings.GrassDistance = (int)v; GameSettings.MarkCustom(); GameSettings.Apply(); }, wholeNumbers: true);
 
-            MenuWidgets.Slider(column, "Field of view", 50f, 110f, GameSettings.FieldOfView,
-                v => $"{Mathf.RoundToInt(v)}°", v => { GameSettings.FieldOfView = v; GameSettings.Apply(); }, wholeNumbers: true);
+            MenuWidgets.Toggle(column, "Clouds", GameSettings.Clouds, v => { GameSettings.Clouds = v; GameSettings.MarkCustom(); GameSettings.Apply(); });
+
+            MenuWidgets.Toggle(column, "Wind (leaves, grass, water)", GameSettings.Wind, v => { GameSettings.Wind = v; GameSettings.MarkCustom(); GameSettings.Apply(); });
+
+            MenuWidgets.Toggle(column, "Post-processing (bloom, colour)", GameSettings.PostProcessing, v => { GameSettings.PostProcessing = v; GameSettings.MarkCustom(); GameSettings.Apply(); });
+
+            int scaleIndex = Math.Max(0, Array.IndexOf(GameSettings.RenderScaleOptions, GameSettings.RenderScale));
+            string[] scaleLabels = Array.ConvertAll(GameSettings.RenderScaleOptions, f => $"{Mathf.RoundToInt(f * 100)}%");
+            MenuWidgets.Selector(column, "Render scale (lower = faster)", scaleLabels, scaleIndex, i =>
+            {
+                GameSettings.RenderScale = GameSettings.RenderScaleOptions[i];
+                GameSettings.MarkCustom();
+                GameSettings.Apply();
+            });
+
+            MenuWidgets.Selector(column, "Anti-aliasing", new[] { "Off", "FXAA (fast)", "SMAA" }, (int)GameSettings.AntiAliasing, i =>
+            {
+                GameSettings.AntiAliasing = (AntiAliasing)i;
+                GameSettings.MarkCustom();
+                GameSettings.Apply();
+            });
         }
 
         private static void AudioSettings(Transform column)

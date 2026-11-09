@@ -66,6 +66,17 @@ namespace Networking
             _router.Register(NetworkMessageType.WorldEdits, OnWorldEdits);
             _router.Register(NetworkMessageType.InventorySnapshot, OnInventorySnapshot);
             _router.Register(NetworkMessageType.Equipment, OnEquipment);
+            _router.Register(NetworkMessageType.TimeSync, OnTimeSync);
+        }
+
+        private void OnTimeSync(byte[] payload)
+        {
+            // A listen server's client already runs the server's clock.
+            if (SharesWorldWithServer)
+                return;
+
+            if (GameplayMessages.TryReadTimeSync(payload, out double seconds, out float dayLength, out float start))
+                global::World.WorldClock.ApplyServerTime(seconds, dayLength, start);
         }
 
         private void OnEquipment(byte[] payload)
@@ -131,6 +142,7 @@ namespace Networking
             _router.Unregister(NetworkMessageType.WorldEdits, OnWorldEdits);
             _router.Unregister(NetworkMessageType.InventorySnapshot, OnInventorySnapshot);
             _router.Unregister(NetworkMessageType.Equipment, OnEquipment);
+            _router.Unregister(NetworkMessageType.TimeSync, OnTimeSync);
         }
 
         private void OnBlockChanged(byte[] payload)

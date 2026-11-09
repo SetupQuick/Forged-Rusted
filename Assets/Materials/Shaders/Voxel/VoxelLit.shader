@@ -6,6 +6,8 @@
 // illumination. The hemisphere colours are set globally by
 // VoxelAtmosphere (falls back to Unity's ambient light probe).
 // No textures, so it stays cheap to render.
+// Wind: uv0.x is a per-vertex wind weight (leaves, grass); every pass
+// applies the same offset so shadows and depth match the moving shape.
 Shader "ForgedRusted/Voxel Lit"
 {
     Properties
@@ -35,6 +37,14 @@ Shader "ForgedRusted/Voxel Lit"
         half4 _VoxelSkyColor;
         half4 _VoxelGroundColor;
         half _VoxelAoDirectStrength;
+
+        #include "VoxelCommon.hlsl"
+
+        float3 VoxelPositionWS(float3 positionOS, float windWeight)
+        {
+            float3 positionWS = TransformObjectToWorld(positionOS);
+            return positionWS + VoxelWindOffset(positionWS, windWeight);
+        }
         ENDHLSL
 
         Pass
@@ -60,6 +70,7 @@ Shader "ForgedRusted/Voxel Lit"
                 float4 positionOS : POSITION;
                 float3 normalOS : NORMAL;
                 half4 color : COLOR;
+                float2 uv : TEXCOORD0;
             };
 
             struct Varyings
@@ -75,10 +86,10 @@ Shader "ForgedRusted/Voxel Lit"
             {
                 Varyings output;
 
-                VertexPositionInputs position = GetVertexPositionInputs(input.positionOS.xyz);
+                float3 positionWS = VoxelPositionWS(input.positionOS.xyz, input.uv.x);
 
-                output.positionCS = position.positionCS;
-                output.positionWS = position.positionWS;
+                output.positionCS = TransformWorldToHClip(positionWS);
+                output.positionWS = positionWS;
                 output.normalWS = TransformObjectToWorldNormal(input.normalOS);
 
                 half4 color = input.color;
@@ -89,7 +100,7 @@ Shader "ForgedRusted/Voxel Lit"
                 color.rgb *= _Tint.rgb;
                 output.color = color;
 
-                output.fogFactor = ComputeFogFactor(position.positionCS.z);
+                output.fogFactor = ComputeFogFactor(output.positionCS.z);
                 return output;
             }
 
@@ -115,7 +126,24 @@ Shader "ForgedRusted/Voxel Lit"
 
                 // AO affects direct light only a little (contact shadow).
                 half directAo = lerp(1.0, ao, _VoxelAoDirectStrength > 0 ? _VoxelAoDirectStrength : 0.4);
-                half3 lighting = ambient + light.color * diffuse * attenuation * directAo;
+                half3 direct = light.color * diffuse * attenuation * directAo;
+
+                // Under water: light fades with depth and the sun throws
+                // moving caustics on everything below the surface.
+                UNITY_BRANCH
+                if (_VoxelUnderwater.x > 0 && input.positionWS.y < _VoxelUnderwater.z)
+                {
+                    half caustic = VoxelCaustics(input.positionWS);
+                    direct *= 0.6 + caustic * 1.0 * saturate(normal.y + 0.3);
+
+                    // Water absorbs red first, then green: light that went
+                    // down through a few metres of water is blue-green.
+                    half3 absorbed = VoxelWaterAbsorption(_VoxelUnderwater.z - input.positionWS.y);
+                    direct *= absorbed;
+                    ambient *= sqrt(absorbed);
+                }
+
+                half3 lighting = ambient + direct;
 
                 half3 color = input.color.rgb * lighting;
                 color = MixFog(color, input.fogFactor);
@@ -149,11 +177,12 @@ Shader "ForgedRusted/Voxel Lit"
             {
                 float4 positionOS : POSITION;
                 float3 normalOS : NORMAL;
+                float2 uv : TEXCOORD0;
             };
 
             float4 Vert(Attributes input) : SV_POSITION
             {
-                float3 positionWS = TransformObjectToWorld(input.positionOS.xyz);
+                float3 positionWS = VoxelPositionWS(input.positionOS.xyz, input.uv.x);
                 float3 normalWS = TransformObjectToWorldNormal(input.normalOS);
 
                 #if defined(_CASTING_PUNCTUAL_LIGHT_SHADOW)
@@ -193,9 +222,9 @@ Shader "ForgedRusted/Voxel Lit"
             #pragma vertex Vert
             #pragma fragment Frag
 
-            float4 Vert(float4 positionOS : POSITION) : SV_POSITION
+            float4 Vert(float4 positionOS : POSITION, float2 uv : TEXCOORD0) : SV_POSITION
             {
-                return TransformObjectToHClip(positionOS.xyz);
+                return TransformWorldToHClip(VoxelPositionWS(positionOS.xyz, uv.x));
             }
 
             half Frag() : SV_Target
@@ -221,6 +250,7 @@ Shader "ForgedRusted/Voxel Lit"
             {
                 float4 positionOS : POSITION;
                 float3 normalOS : NORMAL;
+                float2 uv : TEXCOORD0;
             };
 
             struct Varyings
@@ -232,7 +262,7 @@ Shader "ForgedRusted/Voxel Lit"
             Varyings Vert(Attributes input)
             {
                 Varyings output;
-                output.positionCS = TransformObjectToHClip(input.positionOS.xyz);
+                output.positionCS = TransformWorldToHClip(VoxelPositionWS(input.positionOS.xyz, input.uv.x));
                 output.normalWS = TransformObjectToWorldNormal(input.normalOS);
                 return output;
             }

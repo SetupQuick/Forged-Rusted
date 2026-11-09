@@ -19,6 +19,7 @@ namespace Game
     ///   -server [-port 25565]      dedicated server, no menu
     ///   -host [-port 25565]        host straight away
     ///   -connect 1.2.3.4[:port]    join straight away
+    ///   -benchmark [-quit]         run the graphics benchmark (and quit when done)
     ///   -nomenu                    old behaviour: NetworkRuntime starts by itself
     /// </summary>
     public static class GameBootstrap
@@ -78,6 +79,10 @@ namespace Game
             else if (HasArg(args, "-host"))
             {
                 flow.Host(port);
+            }
+            else if (HasArg(args, "-benchmark"))
+            {
+                flow.StartBenchmark(quitWhenDone: HasArg(args, "-quit"));
             }
         }
 
