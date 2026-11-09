@@ -29,6 +29,13 @@ namespace Items
         [Min(1)]
         public int maxStackSize = 64;
 
+        [Header("Held in hand")]
+        [Tooltip("Optional model shown in the player's hand (first person " +
+                 "and for other players), e.g. a tool. Its pivot is the " +
+                 "grip point. When empty, blocks show a small cube and " +
+                 "other items a coloured tile.")]
+        public GameObject heldPrefab;
+
         [Header("Block")]
         [Tooltip("Placing this item puts a block into the world.")]
         public bool placesBlock;

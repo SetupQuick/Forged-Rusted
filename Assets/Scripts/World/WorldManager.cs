@@ -69,6 +69,29 @@ namespace World
         [Min(0)]
         private int maxConcurrentJobs;
 
+        [Tooltip("Chunks around the camera that show grass and flowers. " +
+                 "They are the most expensive part of a chunk to draw " +
+                 "(about 40% of the triangles), and are barely visible " +
+                 "further away. Set from the graphics settings.")]
+        [SerializeField]
+        [Range(0, 8)]
+        private int detailRadius = 3;
+
+        [Tooltip("Chunks further than this from the camera use a simplified " +
+                 "half-resolution mesh with hidden caves filled (about 4x " +
+                 "fewer triangles, no collider). 0 = always full detail. " +
+                 "Set from the graphics settings.")]
+        [SerializeField]
+        [Range(0, 32)]
+        private int lodDistance = 6;
+
+        [Tooltip("On machines that render: only chunks this close to the " +
+                 "camera or to a player get a collider. Further chunks are " +
+                 "only drawn (saves collider cooking and physics memory).")]
+        [SerializeField]
+        [Range(1, 16)]
+        private int colliderRadius = 3;
+
         private readonly Dictionary<ChunkCoord, ChunkData> _chunks =
             new Dictionary<ChunkCoord, ChunkData>();
 
@@ -113,6 +136,13 @@ namespace World
         private bool _renderingEnabled = true;
         private int _runningJobs;
         private int _epoch;
+        private ChunkCoord _detailCenter;
+        private bool _detailCenterKnown;
+
+        // Chunks players are standing in (this frame), which must keep
+        // full detail and colliders. Value = frame it was last requested.
+        private readonly Dictionary<ChunkCoord, int> _collisionCenters = new Dictionary<ChunkCoord, int>();
+        private readonly List<ChunkCoord> _expiredCenters = new List<ChunkCoord>();
 
         public WorldSettings Settings =>
             settings;
@@ -135,6 +165,56 @@ namespace World
 
         public int PendingJobCount =>
             _runningJobs;
+
+        /// <summary>
+        /// The local view distance in chunks (set by ChunkStreamer). Chunks
+        /// further away exist only because another player is there (on a
+        /// host): they get a collision mesh but nothing to draw.
+        /// </summary>
+        public int ViewDistance { get; set; } = 64;
+
+        /// <summary>Chunks beyond this distance use the simplified mesh (0 = never).</summary>
+        public int LodDistance
+        {
+            get => lodDistance;
+            set
+            {
+                value = Mathf.Clamp(value, 0, 32);
+                if (value == lodDistance)
+                    return;
+
+                lodDistance = value;
+                _detailCenterKnown = false; // re-evaluate every chunk
+            }
+        }
+
+        /// <summary>Number of chunks currently drawn with the simplified mesh.</summary>
+        public int LodChunkCount
+        {
+            get
+            {
+                int count = 0;
+                foreach (ChunkView view in _views.Values)
+                    if (view != null && view.Lod > 0)
+                        count++;
+                return count;
+            }
+        }
+
+        /// <summary>Chunks around the camera with grass and flowers (0 = none).</summary>
+        public int DetailRadius
+        {
+            get => detailRadius;
+            set
+            {
+                value = Mathf.Clamp(value, 0, 8);
+                if (value == detailRadius)
+                    return;
+
+                detailRadius = value;
+                _detailCenterKnown = false; // re-evaluate every chunk
+            }
+        }
 
         /// <summary>Metres per voxel.</summary>
         public float VoxelSize =>
@@ -191,6 +271,12 @@ namespace World
         /// seed if the settings ask for one (the menu backdrop uses the
         /// settings seed until then).
         /// </summary>
+        /// <summary>Dedicated server: nothing is drawn (call before the world starts).</summary>
+        public void DisableRendering()
+        {
+            _renderingEnabled = false;
+        }
+
         public void PrepareForHosting()
         {
             if (settings.UseRandomSeed)
@@ -252,9 +338,134 @@ namespace World
                 PublishServerWorldInfo();
             }
 
+            WorldClock.Advance(Time.deltaTime);
+            ExpireCollisionCenters();
+            UpdateDetailCenter();
             ProcessCompletedJobs();
             ScheduleJobs();
         }
+
+        // ------------------------------------------------------------
+        // Grass/flower distance
+        // ------------------------------------------------------------
+
+        /// <summary>
+        /// Grass is built for chunks within detailRadius + 1 of the camera
+        /// and shown within detailRadius; the extra ring means walking
+        /// around does not remesh chunks right at the edge every time.
+        /// Chunks that move far away drop their grass mesh to save memory.
+        /// </summary>
+        private void UpdateDetailCenter()
+        {
+            if (!_renderingEnabled)
+                return;
+
+            Camera camera = Camera.main;
+            if (camera == null)
+                return;
+
+            ChunkCoord center = WorldPositionToChunk(camera.transform.position);
+
+            if (_detailCenterKnown && center.Equals(_detailCenter))
+                return;
+
+            _detailCenter = center;
+            _detailCenterKnown = true;
+
+            foreach (KeyValuePair<ChunkCoord, ChunkView> pair in _views)
+            {
+                ChunkView view = pair.Value;
+                if (view == null)
+                    continue;
+
+                int distance = DetailDistance(pair.Key);
+
+                // Rebuilt one ring early, so grass is ready before it is shown.
+                if (detailRadius > 0 && distance <= detailRadius + 1 && !view.HasDetail)
+                    _dirty.Add(pair.Key);
+                else if (distance > detailRadius + 2 && view.HasDetail)
+                    view.DropDetail();
+
+                view.SetDetailVisible(distance <= detailRadius);
+
+                // Simplified meshes far away, with one chunk of hysteresis
+                // so walking back and forth does not rebuild the same row.
+                if (!view.HasVisual && WantsVisual(pair.Key))
+                    _dirty.Add(pair.Key);           // now in view: build what is drawn
+                else if (view.HasVisual && DetailDistance(pair.Key) > ViewDistance + 2)
+                    _dirty.Add(pair.Key);           // only kept for another player: physics only
+                else if (view.Lod > 0 && !WantsLod(pair.Key, hysteresis: -1))
+                    _dirty.Add(pair.Key);           // came close: full detail
+                else if (view.Lod == 0 && WantsLod(pair.Key, hysteresis: 1))
+                    _dirty.Add(pair.Key);           // far away now: simplified
+                else if (view.Lod == 0 && !view.HasCollision && WantsCollision(pair.Key))
+                    _dirty.Add(pair.Key);           // needs a collider again
+                else if (view.HasCollision && DetailDistance(pair.Key) > colliderRadius + 1 && !NearCollisionCenter(pair.Key))
+                    view.DropCollider();            // nobody near: no physics needed
+            }
+        }
+
+        /// <summary>
+        /// Far from the camera and from every player that needs collision.
+        /// hysteresis shifts the distance (+1 = only once clearly beyond).
+        /// </summary>
+        private bool WantsLod(ChunkCoord coord, int hysteresis = 0)
+        {
+            if (!_renderingEnabled || lodDistance <= 0 || !_detailCenterKnown)
+                return false;
+
+            if (DetailDistance(coord) <= lodDistance + Math.Max(0, hysteresis))
+                return false;
+
+            return !NearCollisionCenter(coord);
+        }
+
+        private bool WantsVisual(ChunkCoord coord) =>
+            _renderingEnabled && (!_detailCenterKnown || DetailDistance(coord) <= ViewDistance + 1);
+
+        /// <summary>Servers: always. Clients: near the camera or near a player.</summary>
+        private bool WantsCollision(ChunkCoord coord)
+        {
+            if (!_renderingEnabled || !_detailCenterKnown)
+                return true;
+
+            return DetailDistance(coord) <= colliderRadius || NearCollisionCenter(coord);
+        }
+
+        private bool NearCollisionCenter(ChunkCoord coord)
+        {
+            foreach (ChunkCoord center in _collisionCenters.Keys)
+            {
+                if (Math.Abs(center.X - coord.X) <= 2 && Math.Abs(center.Z - coord.Z) <= 2)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private void ExpireCollisionCenters()
+        {
+            int frame = Time.frameCount;
+            _expiredCenters.Clear();
+
+            foreach (KeyValuePair<ChunkCoord, int> pair in _collisionCenters)
+                if (frame - pair.Value > 120)
+                    _expiredCenters.Add(pair.Key);
+
+            foreach (ChunkCoord coord in _expiredCenters)
+                _collisionCenters.Remove(coord);
+        }
+
+        private int DetailDistance(ChunkCoord coord)
+        {
+            if (!_detailCenterKnown)
+                return 0;
+
+            return Math.Max(Math.Abs(coord.X - _detailCenter.X), Math.Abs(coord.Z - _detailCenter.Z));
+        }
+
+        private bool WantsDetail(ChunkCoord coord) =>
+            _renderingEnabled && detailRadius > 0 && DetailDistance(coord) <= detailRadius + 1;
 
         // ------------------------------------------------------------
         // Seed / initialisation
@@ -312,6 +523,73 @@ namespace World
         /// <summary>
         /// (Re)creates the world for a seed. Existing chunks are dropped.
         /// </summary>
+        /// <summary>Incremented on every player edit (the saver compares it to see unsaved changes).</summary>
+        public long ChangeCount { get; private set; }
+
+        /// <summary>
+        /// Everything a save needs, copied on the main thread so it can be
+        /// written on a worker thread while the game goes on.
+        /// </summary>
+        public Saving.WorldSaveData CaptureSave()
+        {
+            var data = new Saving.WorldSaveData
+            {
+                Seed = Seed,
+                GeneratorVersion = TerrainConfig.GeneratorVersion,
+                SettingsFingerprint = Config != null ? Config.SettingsFingerprint : 0,
+                WorldSeconds = WorldClock.WorldSeconds,
+                DayLengthSeconds = WorldClock.DayLengthSeconds,
+                StartTimeOfDay = WorldClock.StartTimeOfDay
+            };
+
+            foreach (KeyValuePair<ChunkCoord, Dictionary<int, BlockId>> chunkEdits in _edits)
+                data.Edits[chunkEdits.Key] = new Dictionary<int, BlockId>(chunkEdits.Value);
+
+            return data;
+        }
+
+        /// <summary>
+        /// Starts the world from a save: its seed, clock and every player
+        /// edit (applied to chunks as they are generated). Any world that
+        /// was running (e.g. the menu backdrop) is thrown away first.
+        /// </summary>
+        public void LoadSave(Saving.WorldSaveData data)
+        {
+            if (data == null)
+                throw new ArgumentNullException(nameof(data));
+
+            if (IsReady)
+                ResetWorld();
+
+            // Edits first: anything listening to WorldReady may already
+            // ask for chunks, and those must include the edits.
+            foreach (KeyValuePair<ChunkCoord, Dictionary<int, BlockId>> chunkEdits in data.Edits)
+                _edits[chunkEdits.Key] = new Dictionary<int, BlockId>(chunkEdits.Value);
+
+            InitializeWorld(data.Seed);
+
+            if (data.GeneratorVersion != TerrainConfig.GeneratorVersion)
+            {
+                Debug.LogWarning(
+                    $"This world was saved with world generator version {data.GeneratorVersion} " +
+                    $"(now {TerrainConfig.GeneratorVersion}); unexplored land may look different.");
+            }
+
+            WorldClock.Restore(data.WorldSeconds, data.DayLengthSeconds, data.StartTimeOfDay);
+
+            ChangeCount = 0;
+        }
+
+        /// <summary>Starts a brand-new world for hosting (random seed if the settings say so).</summary>
+        public void StartNewWorld()
+        {
+            if (IsReady)
+                ResetWorld();
+
+            InitializeWorld(settings.UseRandomSeed ? ResolveServerSeed() : settings.Seed);
+            ChangeCount = 0;
+        }
+
         public void InitializeWorld(int seed)
         {
             if (IsReady && seed == Seed)
@@ -323,6 +601,9 @@ namespace World
             TerrainConfig config = settings.CreateConfig(seed);
             _generator = new NoiseWorldGenerator(config);
 
+            // Clients get the server's clock with the first TimeSync.
+            WorldClock.Reset(settings.DayLengthSeconds, settings.StartTimeOfDay);
+
             if (_renderingEnabled &&
                 createAtmosphere &&
                 FindFirstObjectByType<VoxelAtmosphere>() == null)
@@ -333,6 +614,14 @@ namespace World
             // Block break/place sounds and underwater muffling.
             if (_renderingEnabled && GetComponent<GameAudio.WorldAudio>() == null)
                 gameObject.AddComponent<GameAudio.WorldAudio>();
+
+            // Underwater fog when the camera dives.
+            if (_renderingEnabled && GetComponent<UnderwaterEffect>() == null)
+                gameObject.AddComponent<UnderwaterEffect>();
+
+            // Voxel clouds drifting with the world clock.
+            if (_renderingEnabled && createAtmosphere && GetComponent<CloudLayer>() == null)
+                gameObject.AddComponent<CloudLayer>();
 
             Debug.Log(
                 $"World initialised: seed {seed}, " +
@@ -473,6 +762,8 @@ namespace World
 
             if (_views.TryGetValue(coord, out ChunkView existing) &&
                 existing != null &&
+                existing.Lod == 0 &&
+                existing.HasCollision &&
                 !_dirty.Contains(coord))
             {
                 existing.EnsureColliderNow();
@@ -484,9 +775,11 @@ namespace World
                 GetOrCreateChunk(new ChunkCoord(coord.X + dx, coord.Z + dz));
 
             ChunkNeighborhood neighbourhood = CollectNeighbourhood(coord);
-            ChunkMeshResult result = ChunkMeshBuilder.Build(neighbourhood, _renderingEnabled, Seed, VoxelSize);
+            // Always with a collider: this is the path for chunks players need now.
+            ChunkMeshResult result = ChunkMeshBuilder.Build(neighbourhood, WantsVisual(coord), Seed, VoxelSize, WantsDetail(coord), buildCollision: true);
 
             ApplyMesh(result, colliderImmediately: true);
+            ChunkMeshData.Return(result);
         }
 
         /// <summary>
@@ -498,14 +791,33 @@ namespace World
         /// </summary>
         public void EnsureCollisionAround(ChunkCoord center)
         {
+            _collisionCenters[center] = Time.frameCount;
+
             EnsureChunkReadyNow(center);
 
-            for (int dz = -1; dz <= 1; dz++)
-            for (int dx = -1; dx <= 1; dx++)
+            for (int dz = -2; dz <= 2; dz++)
+            for (int dx = -2; dx <= 2; dx++)
             {
-                if ((dx != 0 || dz != 0) &&
-                    _views.TryGetValue(new ChunkCoord(center.X + dx, center.Z + dz), out ChunkView view) &&
-                    view != null)
+                if ((dx == 0 && dz == 0) ||
+                    !_views.TryGetValue(new ChunkCoord(center.X + dx, center.Z + dz), out ChunkView view) ||
+                    view == null)
+                {
+                    continue;
+                }
+
+                bool adjacent = Math.Abs(dx) <= 1 && Math.Abs(dz) <= 1;
+
+                if (view.Lod > 0 || !view.HasCollision)
+                {
+                    // A simplified or far chunk has no collider. Next to
+                    // the player it is rebuilt right now; one further out
+                    // in the background (it is usually done before needed).
+                    if (adjacent)
+                        EnsureChunkReadyNow(view.Coord);
+                    else
+                        _dirty.Add(view.Coord);
+                }
+                else if (adjacent)
                 {
                     view.EnsureColliderNow();
                 }
@@ -628,6 +940,7 @@ namespace World
 
             ChunkData chunk = CreateChunkData(coord);
             _generator.GenerateChunk(chunk);
+            chunk.Compact();
             PublishChunk(chunk);
 
             return chunk;
@@ -728,6 +1041,7 @@ namespace World
             }
 
             chunkEdits[EditKey(localX, worldY, localZ)] = block;
+            ChangeCount++;
 
             if (loaded)
             {
@@ -954,6 +1268,7 @@ namespace World
                 try
                 {
                     generator.GenerateChunk(chunk);
+                    chunk.Compact(); // ~320 -> ~110 KB
                     result.Chunk = chunk;
                 }
                 catch (Exception exception)
@@ -972,9 +1287,12 @@ namespace World
             _runningJobs++;
 
             int epoch = _epoch;
-            bool buildLiquid = _renderingEnabled;
+            bool buildLiquid = WantsVisual(coord); // false = collision only
             long seed = Seed;
             float voxelSize = VoxelSize;
+            bool includeDetail = WantsDetail(coord);
+            bool lod = buildLiquid && WantsLod(coord);
+            bool collision = WantsCollision(coord);
             ChunkNeighborhood neighbourhood = CollectNeighbourhood(coord);
 
             Task.Run(() =>
@@ -988,7 +1306,9 @@ namespace World
 
                 try
                 {
-                    result.Mesh = ChunkMeshBuilder.Build(neighbourhood, buildLiquid, seed, voxelSize);
+                    result.Mesh = lod
+                        ? ChunkLod.Build(neighbourhood, buildLiquid, seed, voxelSize)
+                        : ChunkMeshBuilder.Build(neighbourhood, buildLiquid, seed, voxelSize, includeDetail, collision);
                 }
                 catch (Exception exception)
                 {
@@ -1013,7 +1333,10 @@ namespace World
                     break;
 
                 if (result.Epoch != _epoch)
+                {
+                    ChunkMeshData.Return(result.Mesh);
                     continue;
+                }
 
                 if (result.Kind == JobKind.Mesh && uploads >= maxMeshUploadsPerFrame)
                 {
@@ -1029,6 +1352,7 @@ namespace World
                     Debug.LogException(result.Error);
                     _generating.Remove(result.Coord);
                     _meshing.Remove(result.Coord);
+                    ChunkMeshData.Return(result.Mesh);
                     continue;
                 }
 
@@ -1045,11 +1369,22 @@ namespace World
                 {
                     _meshing.Remove(result.Coord);
 
-                    if (!_wantedViewSet.Contains(result.Coord))
-                        continue;
+                    if ((result.Mesh.Lod > 0 && !WantsLod(result.Coord, hysteresis: -1)) ||
+                        (!result.Mesh.Visual && WantsVisual(result.Coord)) ||
+                        (result.Mesh.Lod == 0 && result.Mesh.Collision == null && NearCollisionCenter(result.Coord)))
+                    {
+                        // Built as a distant mesh, but a player or the
+                        // camera came close meanwhile: build it again.
+                        _dirty.Add(result.Coord);
+                    }
+                    else if (_wantedViewSet.Contains(result.Coord))
+                    {
+                        ApplyMesh(result.Mesh, colliderImmediately: false);
+                        uploads++;
+                    }
 
-                    ApplyMesh(result.Mesh, colliderImmediately: false);
-                    uploads++;
+                    // The lists are reused by the next meshing job.
+                    ChunkMeshData.Return(result.Mesh);
                 }
             }
         }
@@ -1077,6 +1412,7 @@ namespace World
             }
 
             view.ApplyMesh(result, colliderImmediately);
+            view.SetDetailVisible(DetailDistance(coord) <= detailRadius);
 
             // Something changed while the mesh was being built.
             ChunkNeighborhood current = CollectNeighbourhood(coord);

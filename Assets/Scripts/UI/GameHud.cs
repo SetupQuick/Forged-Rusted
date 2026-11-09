@@ -102,7 +102,8 @@ namespace GameUI
         private void Build(RectTransform root)
         {
             // Underwater tint, behind everything else.
-            _underwater = UiBuilder.Image("Underwater", root, new Color(0.12f, 0.32f, 0.62f, 0.38f));
+            // Light tint only; the underwater fog (UnderwaterEffect) does the real work.
+            _underwater = UiBuilder.Image("Underwater", root, new Color(0.05f, 0.3f, 0.4f, 0.12f));
             UiBuilder.Stretch(_underwater.rectTransform);
             _underwater.enabled = false;
 
@@ -134,8 +135,9 @@ namespace GameUI
             UiBuilder.AddOutline(_itemName, new Color(0, 0, 0, 0.7f), 1.5f);
 
             // Controls hint.
-            TextMeshProUGUI hint = UiBuilder.Text("Hint", root, 16, TextAlignmentOptions.BottomLeft, new Color(1, 1, 1, 0.55f));
-            UiBuilder.Place(hint.rectTransform, new Vector2(0, 0), new Vector2(0, 0), new Vector2(16, 12), new Vector2(700, 24));
+            // Bottom right, clear of the hotbar in the middle.
+            TextMeshProUGUI hint = UiBuilder.Text("Hint", root, 16, TextAlignmentOptions.BottomRight, new Color(1, 1, 1, 0.55f));
+            UiBuilder.Place(hint.rectTransform, new Vector2(1, 0), new Vector2(1, 0), new Vector2(-16, 12), new Vector2(560, 44));
             hint.text = "LMB break   RMB place   1-9 / wheel hotbar   Tab inventory   Space swim up   Ctrl/C dive";
         }
 
@@ -255,7 +257,7 @@ namespace GameUI
             bool inventoryOpen = _inventoryUI != null && _inventoryUI.IsOpen;
 
             _crosshair.gameObject.SetActive(!inventoryOpen);
-            _underwater.enabled = _motor != null && _motor.IsHeadUnderwater;
+            _underwater.enabled = World.Rendering.UnderwaterEffect.CameraUnderwater;
 
             if (_interaction == null)
                 _interaction = _inventory.GetComponent<Gameplay.BlockInteraction>();

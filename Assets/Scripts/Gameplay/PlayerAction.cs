@@ -8,7 +8,8 @@ namespace Gameplay
         InventoryClick = 1,
         InventoryClose = 2,
         BreakBlock = 3,
-        PlaceBlock = 4
+        PlaceBlock = 4,
+        SelectSlot = 5
     }
 
     /// <summary>
@@ -53,6 +54,12 @@ namespace Gameplay
         {
             Type = PlayerActionType.BreakBlock,
             Position = position
+        };
+
+        public static PlayerAction Select(int hotbarSlot) => new PlayerAction
+        {
+            Type = PlayerActionType.SelectSlot,
+            Slot = (byte)hotbarSlot
         };
 
         public static PlayerAction Place(Vector3Int position, int hotbarSlot) => new PlayerAction

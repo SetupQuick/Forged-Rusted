@@ -49,7 +49,8 @@ with a message.
 
 | Tab | Settings |
 |-----|----------|
-| Graphics | display mode (fullscreen / borderless / window), resolution, V-Sync, frame rate limit, quality preset, render distance (4-16 chunks), shadows (off/low/medium/high), post-processing, field of view |
+| Display | display mode (fullscreen / borderless / window), resolution, V-Sync, frame rate limit, field of view, render pipeline profile |
+| Graphics | preset (Low / Medium / High / Ultra / Custom), render distance (4-16 chunks), shadows (off/low/medium/high), grass distance, clouds, wind, post-processing, render scale, anti-aliasing - see [Performance.md](Performance.md) |
 | Audio | master volume, effects volume |
 | Controls | mouse sensitivity, invert Y (key list on the Controls screen) |
 | Interface | FPS counter, network statistics (F3) |
@@ -71,3 +72,9 @@ Game.exe -nomenu                   old behaviour (NetworkRuntime starts by itsel
   rebinding screen).
 * Music and its volume slider (there is no music yet).
 * Player names, server browser / LAN discovery.
+
+## Hosting a saved world
+
+The host screen asks for a world name and your player name. Worlds are
+saved automatically - see [Saving.md](Saving.md). The join screen also
+asks for your name; your inventory is kept per world on the host.

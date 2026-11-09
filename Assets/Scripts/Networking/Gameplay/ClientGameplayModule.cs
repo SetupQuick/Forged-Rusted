@@ -25,8 +25,23 @@ namespace Networking
         private readonly ClientMessageRouter _router;
         private readonly Func<IGameplayWorld> _world;
         private readonly List<BlockChange> _buffer = new List<BlockChange>();
+        private readonly Dictionary<uint, ItemData> _heldByPeer = new Dictionary<uint, ItemData>();
+
+        /// <summary>(peer id, item now held or null) - for other players' avatars.</summary>
+        public event Action<uint, ItemData> HeldItemChanged;
+
+        /// <summary>What another player is holding, as last told by the server.</summary>
+        public ItemData GetHeldItem(uint peerId)
+        {
+            return _heldByPeer.TryGetValue(peerId, out ItemData item) ? item : null;
+        }
         private uint _nextSequence = 1;
         private bool _disposed;
+        private bool _profileSent;
+
+        /// <summary>Player id/name sent to the server (defaults to this PC's profile; tests override).</summary>
+        public string ProfileId { get; set; }
+        public string ProfileName { get; set; }
 
         /// <summary>True on a listen server: the world is the server's own.</summary>
         public bool SharesWorldWithServer { get; }
@@ -55,6 +70,27 @@ namespace Networking
             _router.Register(NetworkMessageType.BlockChanged, OnBlockChanged);
             _router.Register(NetworkMessageType.WorldEdits, OnWorldEdits);
             _router.Register(NetworkMessageType.InventorySnapshot, OnInventorySnapshot);
+            _router.Register(NetworkMessageType.Equipment, OnEquipment);
+            _router.Register(NetworkMessageType.TimeSync, OnTimeSync);
+        }
+
+        private void OnTimeSync(byte[] payload)
+        {
+            // A listen server's client already runs the server's clock.
+            if (SharesWorldWithServer)
+                return;
+
+            if (GameplayMessages.TryReadTimeSync(payload, out double seconds, out float dayLength, out float start))
+                global::World.WorldClock.ApplyServerTime(seconds, dayLength, start);
+        }
+
+        private void OnEquipment(byte[] payload)
+        {
+            if (!GameplayMessages.TryReadEquipment(payload, out uint peerId, out ItemData held))
+                return;
+
+            _heldByPeer[peerId] = held;
+            HeldItemChanged?.Invoke(peerId, held);
         }
 
         /// <summary>Sends an action; returns its sequence number (0 if not connected).</summary>
@@ -85,6 +121,19 @@ namespace Networking
 
         public void Tick(double now, double deltaTime)
         {
+            // Tell the server who we are, once, so a saved world can give
+            // our inventory back.
+            if (!_profileSent && !_disposed && _client.IsConnected)
+            {
+                string id = ProfileId ?? LocalPlayerProfile.Id;
+                string name = ProfileName ?? LocalPlayerProfile.Name;
+
+                _profileSent = _client.Send(
+                    NetworkMessageType.PlayerProfile,
+                    writer => GameplayMessages.WriteProfile(writer, id, name),
+                    NetworkDelivery.ReliableOrdered);
+            }
+
             // Changes that arrived before the world had its seed.
             if (_buffer.Count > 0)
             {
@@ -110,6 +159,8 @@ namespace Networking
             _router.Unregister(NetworkMessageType.BlockChanged, OnBlockChanged);
             _router.Unregister(NetworkMessageType.WorldEdits, OnWorldEdits);
             _router.Unregister(NetworkMessageType.InventorySnapshot, OnInventorySnapshot);
+            _router.Unregister(NetworkMessageType.Equipment, OnEquipment);
+            _router.Unregister(NetworkMessageType.TimeSync, OnTimeSync);
         }
 
         private void OnBlockChanged(byte[] payload)

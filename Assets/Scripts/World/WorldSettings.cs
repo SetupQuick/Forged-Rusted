@@ -91,6 +91,21 @@ namespace World
         [Range(0f, 3f)]
         private float treeDensity = 1f;
 
+        [Header("Day and night")]
+        [Tooltip("Real minutes for one full day and night.")]
+        [SerializeField]
+        [Range(1f, 120f)]
+        private float dayLengthMinutes = 20f;
+
+        [Tooltip("Time of day when a new world starts (0 midnight, 0.25 sunrise, 0.5 noon).")]
+        [SerializeField]
+        [Range(0f, 1f)]
+        private float startTimeOfDay = 0.3f;
+
+        public float DayLengthSeconds => dayLengthMinutes * 60f;
+
+        public float StartTimeOfDay => startTimeOfDay;
+
         public int Seed => seed;
 
         public bool UseRandomSeed => useRandomSeed;

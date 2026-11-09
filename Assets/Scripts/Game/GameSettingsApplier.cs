@@ -14,6 +14,8 @@ namespace Game
     /// </summary>
     public sealed class GameSettingsApplier : MonoBehaviour
     {
+        private const float NearClip = 0.05f;
+
         private int _appliedQuality = int.MinValue;
         private bool _screenApplied;
         private bool _dirty = true;
@@ -94,6 +96,11 @@ namespace Game
             if (camera != null && !Mathf.Approximately(camera.fieldOfView, GameSettings.FieldOfView))
                 camera.fieldOfView = GameSettings.FieldOfView;
 
+            // The player is 0.6 m wide; a near plane of 0.3 m (the prefab
+            // value) lets you see into blocks when standing against them.
+            if (camera != null && camera.nearClipPlane > NearClip)
+                camera.nearClipPlane = NearClip;
+
             ChunkStreamer streamer = ChunkStreamerCache.Get();
             if (streamer != null && streamer.RenderDistance != GameSettings.RenderDistance)
                 streamer.RenderDistance = GameSettings.RenderDistance;
@@ -105,9 +112,32 @@ namespace Game
             VoxelAtmosphere atmosphere = AtmosphereCache.Get();
             if (atmosphere != null && (_dirty || atmosphere != _lastAtmosphere))
             {
-                atmosphere.SetShadowDistance(GameSettings.ShadowDistance(GameSettings.Shadows));
+                ShadowParameters shadows = GameSettings.GetShadowParameters(GameSettings.Shadows);
+                atmosphere.SetShadows(shadows.Distance, shadows.Cascades, shadows.Resolution, shadows.Soft);
                 atmosphere.SetPostProcessing(GameSettings.PostProcessing);
+                atmosphere.SetAntialiasing(
+                    GameSettings.AntiAliasing == AntiAliasing.Smaa ? UnityEngine.Rendering.Universal.AntialiasingMode.SubpixelMorphologicalAntiAliasing :
+                    GameSettings.AntiAliasing == AntiAliasing.Fxaa ? UnityEngine.Rendering.Universal.AntialiasingMode.FastApproximateAntialiasing :
+                    UnityEngine.Rendering.Universal.AntialiasingMode.None);
                 _lastAtmosphere = atmosphere;
+            }
+
+            World.WorldManager world = World.WorldManager.Active;
+            if (world != null && world.DetailRadius != GameSettings.GrassDistance)
+                world.DetailRadius = GameSettings.GrassDistance;
+
+            if (world != null && world.LodDistance != GameSettings.SimplifyDistance)
+                world.LodDistance = GameSettings.SimplifyDistance;
+
+            if (_dirty)
+            {
+                CloudLayer.Enabled = GameSettings.Clouds;
+                VoxelAtmosphere.WindStrength = GameSettings.Wind ? 1f : 0f;
+
+                // Fewer pixels = much less GPU work; UI stays sharp (overlay canvas).
+                UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset urp = RuntimePipeline.Asset;
+                if (urp != null && !Mathf.Approximately(urp.renderScale, GameSettings.RenderScale))
+                    urp.renderScale = GameSettings.RenderScale;
             }
 
             _dirty = false;

@@ -32,14 +32,35 @@ namespace Networking
         private readonly List<BlockChange> _pendingBroadcast = new List<BlockChange>();
         private bool _subscribedToWorld;
         private bool _disposed;
+        private double _nextTimeSync;
+
+        // Clocks drift very little; this keeps late changes (e.g. a time
+        // command) visible quickly without costing bandwidth.
+        private const double TimeSyncInterval = 5.0;
+
+        // Saved players (id -> data): from the world save, plus everyone who
+        // left this session. Connected players are exported live.
+        private readonly Dictionary<string, global::World.Saving.PlayerSaveData> _savedPlayers =
+            new Dictionary<string, global::World.Saving.PlayerSaveData>();
+
+        /// <summary>Changes whenever any player's saved state may have changed.</summary>
+        public int PlayersVersion { get; private set; }
 
         private sealed class PlayerState
         {
+            // Persistent identity (from PlayerProfile); null until received.
+            public string ProfileId;
+            public string ProfileName;
+
             public Peer Peer;
             public InventoryContainer Inventory;
             public ItemStack Held;
             public uint LastSequence;
             public bool InventoryDirty;
+
+            // Selected hotbar slot and the item last told to everyone.
+            public int SelectedSlot;
+            public ushort BroadcastHeld = ushort.MaxValue;
 
             // Earlier world edits still to send to this player, in order.
             public List<BlockChange> EditBacklog;
@@ -58,6 +79,104 @@ namespace Networking
             _server.PeerConnected += OnPeerConnected;
             _server.PeerDisconnected += OnPeerDisconnected;
             _router.Register(NetworkMessageType.PlayerAction, OnPlayerAction);
+            _router.Register(NetworkMessageType.PlayerProfile, OnPlayerProfile);
+        }
+
+        // ------------------------------------------------------------
+        // Saving
+        // ------------------------------------------------------------
+
+        /// <summary>Players from a world save; they get their inventory back when they connect.</summary>
+        public void ImportPlayers(Dictionary<string, global::World.Saving.PlayerSaveData> players)
+        {
+            if (players == null)
+                return;
+
+            foreach (KeyValuePair<string, global::World.Saving.PlayerSaveData> player in players)
+                _savedPlayers[player.Key] = player.Value;
+
+            // Players already connected (e.g. the host) pick theirs up now.
+            foreach (PlayerState state in _players.Values)
+                if (state.ProfileId != null)
+                    RestorePlayer(state);
+        }
+
+        /// <summary>Every player to save: connected ones as they are now, plus everyone known.</summary>
+        public Dictionary<string, global::World.Saving.PlayerSaveData> ExportPlayers()
+        {
+            var result = new Dictionary<string, global::World.Saving.PlayerSaveData>(_savedPlayers);
+
+            foreach (PlayerState state in _players.Values)
+                if (state.ProfileId != null)
+                    result[state.ProfileId] = Export(state);
+
+            return result;
+        }
+
+        private void OnPlayerProfile(Peer peer, byte[] payload)
+        {
+            if (!_players.TryGetValue(peer.Id, out PlayerState state) || state.ProfileId != null)
+                return; // unknown peer, or already identified (the id cannot change mid-game)
+
+            if (!GameplayMessages.TryReadProfile(payload, out string id, out string name))
+                return;
+
+            // The same id twice at once (copied PlayerPrefs): the second
+            // one plays with a fresh inventory instead of sharing one.
+            foreach (PlayerState other in _players.Values)
+                if (other.ProfileId == id)
+                    return;
+
+            state.ProfileId = id;
+            state.ProfileName = name;
+            RestorePlayer(state);
+        }
+
+        private void RestorePlayer(PlayerState state)
+        {
+            if (!_savedPlayers.TryGetValue(state.ProfileId, out global::World.Saving.PlayerSaveData saved))
+                return;
+
+            var slots = new ItemStack[state.Inventory.Count];
+            for (int i = 0; i < slots.Length && i < saved.Slots.Count; i++)
+            {
+                (string itemId, int count) = saved.Slots[i];
+
+                if (itemId != null && count > 0 && ItemDatabase.TryGet(itemId, out ItemData item))
+                    slots[i] = new ItemStack(item, Math.Min(count, Math.Max(1, item.maxStackSize)));
+            }
+
+            state.Inventory.SetAll(slots, notify: false);
+            state.Held = ItemStack.Empty;
+            state.InventoryDirty = true;
+            PlayersVersion++;
+        }
+
+        private static global::World.Saving.PlayerSaveData Export(PlayerState state)
+        {
+            var data = new global::World.Saving.PlayerSaveData
+            {
+                Name = state.ProfileName ?? string.Empty,
+                SelectedSlot = state.SelectedSlot
+            };
+
+            bool heldStored = state.Held.IsEmpty;
+
+            for (int i = 0; i < state.Inventory.Count; i++)
+            {
+                ItemStack stack = state.Inventory[i];
+
+                // Something still on the cursor goes into the first free slot.
+                if (stack.IsEmpty && !heldStored)
+                {
+                    stack = state.Held;
+                    heldStored = true;
+                }
+
+                data.Slots.Add(stack.IsEmpty ? (null, 0) : (stack.Item.Id, stack.Count));
+            }
+
+            return data;
         }
 
         /// <summary>Server copy of a player's inventory (tests, saving later).</summary>
@@ -88,7 +207,64 @@ namespace Networking
 
                 if (state.InventoryDirty)
                     SendInventory(state);
+
+                BroadcastEquipmentIfChanged(state);
             }
+
+            if (now >= _nextTimeSync)
+            {
+                _nextTimeSync = now + TimeSyncInterval;
+
+                foreach (PlayerState state in _players.Values)
+                    SendTime(state.Peer);
+            }
+        }
+
+        private void SendTime(Peer peer, bool reliable = false)
+        {
+            if (peer.State != ServerPeerState.Connected)
+                return;
+
+            double seconds = global::World.WorldClock.WorldSeconds;
+            float dayLength = global::World.WorldClock.DayLengthSeconds;
+            float start = global::World.WorldClock.StartTimeOfDay;
+
+            // Periodic ones may be lost (the next comes in a few seconds);
+            // the first one on joining is reliable.
+            _server.Send(
+                peer,
+                NetworkMessageType.TimeSync,
+                writer => GameplayMessages.WriteTimeSync(writer, seconds, dayLength, start),
+                reliable ? NetworkDelivery.ReliableOrdered : NetworkDelivery.UnreliableSequenced);
+        }
+
+        /// <summary>Tells everyone when a player's held item changed.</summary>
+        private void BroadcastEquipmentIfChanged(PlayerState state)
+        {
+            ItemStack held = state.Inventory[state.SelectedSlot];
+            ushort id = held.IsEmpty ? (ushort)0 : ItemDatabase.GetNetworkId(held.Item);
+
+            if (id == state.BroadcastHeld)
+                return;
+
+            ItemData item = held.IsEmpty ? null : held.Item;
+            uint peerId = state.Peer.Id;
+            bool all = true;
+
+            foreach (PlayerState other in _players.Values)
+            {
+                if (other.Peer.State != ServerPeerState.Connected)
+                    continue;
+
+                all &= _server.Send(
+                    other.Peer,
+                    NetworkMessageType.Equipment,
+                    writer => GameplayMessages.WriteEquipment(writer, peerId, item),
+                    NetworkDelivery.ReliableOrdered);
+            }
+
+            if (all)
+                state.BroadcastHeld = id;
         }
 
         public void Dispose()
@@ -101,6 +277,7 @@ namespace Networking
             _server.PeerConnected -= OnPeerConnected;
             _server.PeerDisconnected -= OnPeerDisconnected;
             _router.Unregister(NetworkMessageType.PlayerAction, OnPlayerAction);
+            _router.Unregister(NetworkMessageType.PlayerProfile, OnPlayerProfile);
 
             if (_subscribedToWorld)
                 _world.BlockChanged -= OnWorldBlockChanged;
@@ -135,10 +312,34 @@ namespace Networking
             // Start right away so edits arrive right after the world seed.
             SendEditBacklog(state);
             SendInventory(state);
+            SendTime(peer, reliable: true);
+
+            // What everyone else is holding.
+            foreach (PlayerState other in _players.Values)
+            {
+                if (other == state || other.BroadcastHeld == ushort.MaxValue)
+                    continue;
+
+                ItemData item = ItemDatabase.GetByNetworkId(other.BroadcastHeld);
+                uint otherId = other.Peer.Id;
+
+                _server.Send(
+                    peer,
+                    NetworkMessageType.Equipment,
+                    writer => GameplayMessages.WriteEquipment(writer, otherId, item),
+                    NetworkDelivery.ReliableOrdered);
+            }
         }
 
         private void OnPeerDisconnected(uint peerId)
         {
+            // Remember who left, so the next save (and their next join) has them.
+            if (_players.TryGetValue(peerId, out PlayerState state) && state.ProfileId != null)
+            {
+                _savedPlayers[state.ProfileId] = Export(state);
+                PlayersVersion++;
+            }
+
             _players.Remove(peerId);
         }
 
@@ -161,6 +362,7 @@ namespace Networking
 
             state.LastSequence = action.Sequence;
             state.InventoryDirty = true; // always acknowledge
+            PlayersVersion++;
 
             switch (action.Type)
             {
@@ -180,6 +382,11 @@ namespace Networking
                 case PlayerActionType.PlaceBlock:
                     if (!TryPlace(state, action.Position, action.Slot))
                         Reject(state, action.Position);
+                    break;
+
+                case PlayerActionType.SelectSlot:
+                    if (action.Slot < state.Inventory.HotbarSize)
+                        state.SelectedSlot = action.Slot;
                     break;
             }
         }

@@ -65,6 +65,9 @@ namespace Items
 
         public event Action<int> SelectedSlotChanged;
 
+        /// <summary>Raised when a break or place was performed (for hand swing).</summary>
+        public event Action<PlayerActionType> ActionPerformed;
+
         /// <summary>Raised when the held (cursor) stack may have changed.</summary>
         public event Action HeldChanged;
 
@@ -147,6 +150,9 @@ namespace Items
             if (GetComponent<BlockInteraction>() == null)
                 gameObject.AddComponent<BlockInteraction>();
 
+            if (GetComponent<FirstPersonArms>() == null)
+                gameObject.AddComponent<FirstPersonArms>();
+
             GameHud.EnsureFor(this);
         }
 
@@ -220,6 +226,10 @@ namespace Items
 
             ApplyInventoryEffect(action);
             ApplyWorldEffect(action);
+
+            if (action.Type == PlayerActionType.BreakBlock || action.Type == PlayerActionType.PlaceBlock)
+                ActionPerformed?.Invoke(action.Type);
+
             return true;
         }
 
@@ -307,6 +317,14 @@ namespace Items
 
             SelectedSlot = index;
             SelectedSlotChanged?.Invoke(index);
+
+            // The server shows other players what we are holding.
+            if (_network != null)
+            {
+                PlayerAction action = PlayerAction.Select(index);
+                if (_network.Send(ref action) != 0)
+                    _pending.Add(action);
+            }
         }
 
         private void HandleHotbarInput()

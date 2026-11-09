@@ -33,6 +33,10 @@ namespace Networking
 
         private Transform _root, _hips, _torso, _head, _leftArm, _rightArm, _leftLeg, _rightLeg, _leftKnee, _rightKnee;
         private Renderer[] _renderers;
+        private Transform _hand;
+        private GameObject _heldModel;
+        private Items.ItemData _heldItem;
+        private Material _material;
         private bool _built;
         private bool _isLocal;
         private bool _localApplied;
@@ -105,6 +109,11 @@ namespace Networking
             _leftArm = Part("Left Arm", _torso, new Vector3(-4f * v, shoulder, 0), AvatarModel.Arm(palette), material);
             _rightArm = Part("Right Arm", _torso, new Vector3(4f * v, shoulder, 0), AvatarModel.Arm(palette), material);
             _head = Part("Head", _torso, new Vector3(0, AvatarModel.TorsoHeight * v, 0), AvatarModel.Head(palette), material);
+
+            // Grip point at the bottom of the right arm, for held items.
+            _hand = Pivot("Hand", _rightArm, new Vector3(0f, -7.5f * v, 0.04f));
+            _hand.localRotation = Quaternion.Euler(90f, 0f, 0f);
+            _material = material;
 
             _renderers = _root.GetComponentsInChildren<Renderer>(true);
 
@@ -185,6 +194,7 @@ namespace Networking
 
             _airTime = airborne ? _airTime + dt : 0f;
 
+            UpdateHeldItem(swimming);
             Animate(dt, speed, swimming, airborne && _airTime > 0.08f, crouch);
             PlaySounds(dt, speed, swimming, airborne);
         }
@@ -209,6 +219,10 @@ namespace Networking
 
             Vector3 leftArm = new Vector3(armAngle + breathe * 2f, 0f, -4f - breathe);
             Vector3 rightArm = new Vector3(-armAngle + breathe * 2f, 0f, 4f + breathe);
+
+            // Holding something: carry it in front, swinging less.
+            if (_heldModel != null)
+                rightArm = new Vector3(-30f - armAngle * 0.3f, 0f, 4f);
 
             // Thighs swing; knees bend on the back swing (and when crouching).
             Vector3 leftLeg = new Vector3(-legAngle - crouch * 70f, 0f, 0f);
@@ -299,6 +313,46 @@ namespace Networking
                 _audio.pitch = Random.Range(0.9f, 1.1f);
                 _audio.PlayOneShot(GameSounds.Footstep(surface), GameSounds.Volume * volume);
             }
+        }
+
+        /// <summary>
+        /// Shows the item this player holds: our own selection for the local
+        /// player (only its shadow is visible to us), and what the server
+        /// says for everyone else.
+        /// </summary>
+        private void UpdateHeldItem(bool swimming)
+        {
+            Items.ItemData item = null;
+
+            if (_isLocal)
+            {
+                Items.PlayerInventory inventory = GetComponent<Items.PlayerInventory>();
+                item = inventory != null ? inventory.SelectedStack.Item : null;
+            }
+            else if (_netObject != null)
+            {
+                ClientGameplayModule gameplay = NetworkRuntime.Current != null ? NetworkRuntime.Current.ClientGameplay : null;
+                item = gameplay != null ? gameplay.GetHeldItem(_netObject.OwnerPeerId) : null;
+            }
+
+            if (item != _heldItem || (item != null && _heldModel == null))
+            {
+                _heldItem = item;
+
+                if (_heldModel != null)
+                    Destroy(_heldModel);
+
+                _heldModel = HeldItemModel.Create(item, _hand, _material, castShadows: true);
+
+                if (_heldModel != null && _isLocal)
+                {
+                    foreach (Renderer r in _heldModel.GetComponentsInChildren<Renderer>())
+                        r.shadowCastingMode = ShadowCastingMode.ShadowsOnly;
+                }
+            }
+
+            if (_heldModel != null)
+                _heldModel.SetActive(!swimming);
         }
 
         private BlockId SurfaceUnderFeet(WorldManager world)

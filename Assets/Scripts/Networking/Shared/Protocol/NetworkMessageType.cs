@@ -30,6 +30,15 @@ namespace Networking
         InventorySnapshot = 16,
 
         // Server -> joining client: batch of earlier block changes.
-        WorldEdits = 17
+        WorldEdits = 17,
+
+        // Server -> clients: what a player is holding (for hands/avatars).
+        Equipment = 18,
+
+        // Server -> clients: world clock (day/night, clouds), every few seconds.
+        TimeSync = 19,
+
+        // Client -> server: persistent player id and name (for saved inventories).
+        PlayerProfile = 20
     }
 }

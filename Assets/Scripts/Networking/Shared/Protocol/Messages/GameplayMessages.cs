@@ -74,6 +74,10 @@ namespace Networking
                     WritePosition(writer, action.Position);
                     writer.Write(action.Slot);
                     break;
+
+                case PlayerActionType.SelectSlot:
+                    writer.Write(action.Slot);
+                    break;
             }
         }
 
@@ -105,6 +109,10 @@ namespace Networking
 
                     case PlayerActionType.PlaceBlock:
                         action.Position = ReadPosition(reader);
+                        action.Slot = reader.ReadByte();
+                        break;
+
+                    case PlayerActionType.SelectSlot:
                         action.Slot = reader.ReadByte();
                         break;
 
@@ -222,6 +230,110 @@ namespace Networking
             {
                 return false;
             }
+        }
+
+        // --------------------------------------------------------------
+        // Equipment (server -> clients)
+        // --------------------------------------------------------------
+
+        public static void WriteEquipment(PacketWriter writer, uint peerId, ItemData held)
+        {
+            writer.Write(peerId);
+            writer.Write(ItemDatabase.GetNetworkId(held));
+        }
+
+        public static bool TryReadEquipment(byte[] payload, out uint peerId, out ItemData held)
+        {
+            peerId = 0;
+            held = null;
+
+            try
+            {
+                var reader = new PacketReader(payload);
+                peerId = reader.ReadUInt32();
+                held = ItemDatabase.GetByNetworkId(reader.ReadUInt16());
+                return reader.Remaining == 0;
+            }
+            catch (System.InvalidOperationException)
+            {
+                return false;
+            }
+        }
+
+        // --------------------------------------------------------------
+        // Time of day (server -> clients)
+        // --------------------------------------------------------------
+
+        public static void WriteTimeSync(PacketWriter writer, double worldSeconds, float dayLengthSeconds, float startTimeOfDay)
+        {
+            writer.Write(worldSeconds);
+            writer.Write(dayLengthSeconds);
+            writer.Write(startTimeOfDay);
+        }
+
+        public static bool TryReadTimeSync(byte[] payload, out double worldSeconds, out float dayLengthSeconds, out float startTimeOfDay)
+        {
+            worldSeconds = 0;
+            dayLengthSeconds = 0;
+            startTimeOfDay = 0;
+
+            try
+            {
+                var reader = new PacketReader(payload);
+                worldSeconds = reader.ReadDouble();
+                dayLengthSeconds = reader.ReadFloat();
+                startTimeOfDay = reader.ReadFloat();
+
+                return reader.Remaining == 0 &&
+                       !double.IsNaN(worldSeconds) && !double.IsInfinity(worldSeconds) && worldSeconds >= 0 &&
+                       dayLengthSeconds >= 10f && dayLengthSeconds < 1e6f &&
+                       startTimeOfDay >= 0f && startTimeOfDay <= 1f;
+            }
+            catch (System.InvalidOperationException)
+            {
+                return false;
+            }
+        }
+
+        // --------------------------------------------------------------
+        // Player profile (client -> server)
+        // --------------------------------------------------------------
+
+        public const int MaxPlayerIdLength = 64;
+        public const int MaxPlayerNameLength = 24;
+
+        public static void WriteProfile(PacketWriter writer, string playerId, string name)
+        {
+            writer.Write(Clip(playerId, MaxPlayerIdLength));
+            writer.Write(Clip(name, MaxPlayerNameLength));
+        }
+
+        public static bool TryReadProfile(byte[] payload, out string playerId, out string name)
+        {
+            playerId = null;
+            name = null;
+
+            try
+            {
+                var reader = new PacketReader(payload);
+                playerId = reader.ReadString();
+                name = reader.ReadString();
+
+                return reader.Remaining == 0 &&
+                       !string.IsNullOrWhiteSpace(playerId) &&
+                       playerId.Length <= MaxPlayerIdLength &&
+                       name != null && name.Length <= MaxPlayerNameLength;
+            }
+            catch (System.InvalidOperationException)
+            {
+                return false;
+            }
+        }
+
+        private static string Clip(string value, int length)
+        {
+            value = value ?? string.Empty;
+            return value.Length > length ? value.Substring(0, length) : value;
         }
 
         private static void WriteStack(PacketWriter writer, ItemStack stack)
