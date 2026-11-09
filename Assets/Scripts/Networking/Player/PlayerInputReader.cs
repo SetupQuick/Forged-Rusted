@@ -44,7 +44,46 @@ namespace Networking
         private int _jumpSendTicks;
         private bool _active;
 
+        private bool _appliedBlocked;
+
         public bool IsActive => _active;
+
+        private static readonly System.Collections.Generic.HashSet<object> Blockers =
+            new System.Collections.Generic.HashSet<object>();
+
+        private static readonly object DefaultBlocker = new object();
+
+        /// <summary>
+        /// While true (inventory open, game paused, ...) the local player
+        /// does not move or look around, and the mouse cursor is free.
+        /// Setting it uses a shared default owner; systems that can overlap
+        /// should use <see cref="SetGameplayInputBlocked"/> with their own key.
+        /// </summary>
+        public static bool GameplayInputBlocked
+        {
+            get => Blockers.Count > 0;
+            set => SetGameplayInputBlocked(DefaultBlocker, value);
+        }
+
+        /// <summary>Blocks or unblocks gameplay input on behalf of one owner.</summary>
+        public static void SetGameplayInputBlocked(object owner, bool blocked)
+        {
+            if (blocked)
+                Blockers.Add(owner);
+            else
+                Blockers.Remove(owner);
+        }
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStatics()
+        {
+            Blockers.Clear();
+        }
+
+        /// <summary>Mouse look multiplier from the settings (1 = default).</summary>
+        public static float SensitivityMultiplier { get; set; } = 1f;
+
+        public static bool InvertY { get; set; }
 
         private void Awake()
         {
@@ -167,7 +206,7 @@ namespace Networking
             uint networkId,
             uint inputSequence)
         {
-            if (!_active)
+            if (!_active || GameplayInputBlocked)
             {
                 return new PlayerInputMessage(
                     networkId,
@@ -186,6 +225,12 @@ namespace Networking
                     PlayerInputButtons.Jump;
 
                 _jumpSendTicks--;
+            }
+
+            if (_jumpAction.IsPressed())
+            {
+                buttons |=
+                    PlayerInputButtons.JumpHeld;
             }
 
             if (_sprintAction.IsPressed())
@@ -213,19 +258,29 @@ namespace Networking
             if (!_active)
                 return;
 
+            ApplyCursorState();
+
+            if (GameplayInputBlocked)
+                return;
+
             if (_jumpAction.WasPressedThisFrame())
                 _jumpSendTicks = 3;
 
             Vector2 look =
                 _lookAction.ReadValue<Vector2>();
 
+            float sensitivity =
+                mouseSensitivity *
+                SensitivityMultiplier;
+
             _yaw +=
                 look.x *
-                mouseSensitivity;
+                sensitivity;
 
             _pitch -=
                 look.y *
-                mouseSensitivity;
+                sensitivity *
+                (InvertY ? -1f : 1f);
 
             _pitch =
                 Mathf.Clamp(
@@ -242,6 +297,24 @@ namespace Networking
 
             // Pitch affects only the camera target.
             cameraRig.SetPitch(_pitch);
+        }
+
+        private void ApplyCursorState()
+        {
+            if (!lockCursor ||
+                _appliedBlocked == GameplayInputBlocked)
+            {
+                return;
+            }
+
+            _appliedBlocked = GameplayInputBlocked;
+
+            Cursor.lockState =
+                _appliedBlocked
+                    ? CursorLockMode.None
+                    : CursorLockMode.Locked;
+
+            Cursor.visible = _appliedBlocked;
         }
 
         private void OnDestroy()

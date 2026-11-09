@@ -13,8 +13,19 @@ MonoBehaviour:
   m_Name: DefaultWorldSettings
   m_EditorClassIdentifier: Assembly-CSharp::World.WorldSettings
   seed: 12345
-  chunkSize: 16
-  worldHeight: 128
-  baseTerrainHeight: 32
-  terrainHeightVariation: 16
-  terrainFrequency: 0.01
+  useRandomSeed: 0
+  voxelSize: 0.5
+  chunkSize: 32
+  worldHeight: 320
+  seaLevel: 80
+  continentScale: 1400
+  mountainHeight: 80
+  hillHeight: 10
+  snowLineAboveSea: 62
+  biomeScale: 1000
+  rivers: 1
+  caves: 1
+  caveDensity: 1
+  ores: 1
+  structures: 1
+  treeDensity: 1

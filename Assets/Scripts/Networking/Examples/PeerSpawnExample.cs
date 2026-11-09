@@ -26,6 +26,13 @@ namespace Networking
                 new Dictionary<uint, uint>();
 
         private NetworkRuntime _runtime;
+
+        /// <summary>For scenes built from code (see GameBootstrap).</summary>
+        public NetObject PlayerPrefab
+        {
+            get => playerPrefab;
+            set => playerPrefab = value;
+        }
         private WorldManager _worldManager;
 
         private int _spawnIndex;
@@ -35,8 +42,9 @@ namespace Networking
             _runtime =
                 NetworkRuntime.Current;
 
-            if (_runtime == null ||
-                !_runtime.RunsServer)
+            // The runtime may start later (from the main menu), so
+            // subscribe now; PeerConnected only fires on a server anyway.
+            if (_runtime == null)
             {
                 enabled = false;
                 return;
@@ -55,7 +63,8 @@ namespace Networking
             _worldManager =
                 FindFirstObjectByType<WorldManager>();
 
-            if (_worldManager == null)
+            if (_worldManager == null &&
+                _runtime.RunsServer)
             {
                 Debug.LogError(
                     "PeerSpawnExample requires " +
@@ -87,30 +96,49 @@ namespace Networking
         private void OnPeerConnected(
             Peer peer)
         {
-            if (_objectByPeer.ContainsKey(
-                peer.Id))
+            if (_worldManager == null)
             {
-                return;
+                _worldManager =
+                    FindFirstObjectByType<WorldManager>();
+
+                if (_worldManager == null)
+                    return;
             }
 
-            float spawnX =
-                firstSpawnPosition.x +
-                (_spawnIndex++ * spacing);
+            // Peer ids restart when a server is started again; forget
+            // players from a previous session that no longer exist.
+            if (_objectByPeer.TryGetValue(
+                    peer.Id,
+                    out uint existingId))
+            {
+                if (_runtime.World.TryGet(existingId, out NetObject existing) &&
+                    existing != null)
+                {
+                    return;
+                }
 
-            float spawnZ =
-                firstSpawnPosition.z;
+                _objectByPeer.Remove(peer.Id);
+                _spawnIndex = 0;
+            }
 
-            int surfaceY =
-                _worldManager.GetSurfaceHeight(
-                    Mathf.FloorToInt(spawnX),
-                    Mathf.FloorToInt(spawnZ));
+            // Spread players out a little, then let the world pick the
+            // nearest dry, flat spot (never inside an ocean or river).
+            // This also generates the terrain and colliders there.
+            Vector3 preferred =
+                new Vector3(
+                    firstSpawnPosition.x +
+                    (_spawnIndex++ * spacing),
+                    0f,
+                    firstSpawnPosition.z);
+
+            Vector3 ground =
+                _worldManager.FindSpawnPosition(
+                    preferred);
 
             Vector3 position =
-                new Vector3(
-                    spawnX,
-                    surfaceY +
-                    spawnHeightOffset,
-                    spawnZ);
+                ground +
+                Vector3.up *
+                spawnHeightOffset;
 
             NetObject netObject =
                 _runtime.World.SpawnAuthoritative(
@@ -125,8 +153,7 @@ namespace Networking
 
             Debug.Log(
                 $"Spawned peer {peer.Id} " +
-                $"at {position}. " +
-                $"Surface Y={surfaceY}.");
+                $"at {position}.");
         }
 
         private void OnPeerDisconnected(

@@ -56,8 +56,19 @@ namespace Networking
         private GameServer _server;
         private GameClient _client;
 
+        private ServerWorldInfoModule _serverWorldInfo;
+
+        private WorldInfoMessage? _serverWorldInfoMessage;
+
         private double _previousTime;
         private bool _shuttingDown;
+
+        /// <summary>
+        /// Set before the scene starts (the main menu does this) to keep
+        /// the runtime from starting by itself; StartRuntime is called
+        /// when the player picks Host or Join.
+        /// </summary>
+        public static bool SuppressAutoStart { get; set; }
 
         public static NetworkRuntime Current
         {
@@ -115,6 +126,42 @@ namespace Networking
 
         public event Action<string> Error;
 
+        /// <summary>
+        /// Raised on clients when the server tells us which world to
+        /// generate. Also check <see cref="ReceivedWorldInfo"/> in case
+        /// it arrived before you subscribed.
+        /// </summary>
+        public event Action<WorldInfoMessage> WorldInfoReceived;
+
+        /// <summary>
+        /// The last world info received from the server (clients only).
+        /// </summary>
+        public WorldInfoMessage? ReceivedWorldInfo
+        {
+            get;
+            private set;
+        }
+
+        /// <summary>
+        /// The world info this server sends to clients (servers only).
+        /// </summary>
+        public WorldInfoMessage? ServerWorldInfo =>
+            _serverWorldInfoMessage;
+
+        /// <summary>Client-side gameplay (actions, block changes, inventory). Null without a client.</summary>
+        public ClientGameplayModule ClientGameplay
+        {
+            get;
+            private set;
+        }
+
+        /// <summary>Server-side gameplay (authoritative inventories and edits). Null without a server.</summary>
+        public ServerGameplayModule ServerGameplay
+        {
+            get;
+            private set;
+        }
+
         private void Awake()
         {
             if (Current != null &&
@@ -155,7 +202,8 @@ namespace Networking
         private void Start()
         {
             if (Current != this ||
-                !startAutomatically)
+                !startAutomatically ||
+                SuppressAutoStart)
             {
                 return;
             }
@@ -293,12 +341,103 @@ namespace Networking
             _client = null;
             _server = null;
 
+            _serverWorldInfo = null;
+            _serverWorldInfoMessage = null;
+            ClientGameplay = null;
+            ServerGameplay = null;
+            ReceivedWorldInfo = null;
+
             LocalPeerId = 0;
 
             world?.Shutdown();
 
             Mode = NetworkMode.Stopped;
             _shuttingDown = false;
+        }
+
+        /// <summary>
+        /// Sets the world the server hosts. Called by the world once it
+        /// has chosen a seed; clients that are already connected get it
+        /// immediately, later clients when they connect.
+        /// </summary>
+        public void SetServerWorldInfo(
+            WorldInfoMessage info)
+        {
+            if (!RunsServer)
+            {
+                throw new InvalidOperationException(
+                    "Only a server can set the world info.");
+            }
+
+            bool changed =
+                !_serverWorldInfoMessage.HasValue ||
+                !_serverWorldInfoMessage.Value.Equals(info);
+
+            _serverWorldInfoMessage = info;
+
+            if (changed)
+                _serverWorldInfo?.Broadcast();
+        }
+
+        private void OnWorldInfoReceived(
+            WorldInfoMessage info)
+        {
+            ReceivedWorldInfo = info;
+
+            Debug.Log(
+                $"Received world info: {info}.");
+
+            WorldInfoReceived?.Invoke(info);
+        }
+
+        private void InstallServerGameplay(
+            ServerMessageRouter router)
+        {
+            // After world info, so a joining client gets the seed before
+            // any block edits.
+            ServerGameplay =
+                new ServerGameplayModule(
+                    _server,
+                    router,
+                    new WorldGameplayAccess(world));
+
+            _modules.Add(ServerGameplay);
+        }
+
+        private void InstallClientGameplay(
+            ClientMessageRouter router,
+            bool sharesWorldWithServer)
+        {
+            var access =
+                new WorldGameplayAccess(world);
+
+            ClientGameplay =
+                new ClientGameplayModule(
+                    _client,
+                    router,
+                    () => access,
+                    sharesWorldWithServer);
+
+            _modules.Add(ClientGameplay);
+        }
+
+        private void InstallServerWorldInfo()
+        {
+            _serverWorldInfo =
+                new ServerWorldInfoModule(
+                    _server,
+                    () => _serverWorldInfoMessage);
+
+            _modules.Add(_serverWorldInfo);
+        }
+
+        private void InstallClientWorldInfo(
+            ClientMessageRouter router)
+        {
+            _modules.Add(
+                new ClientWorldInfoModule(
+                    router,
+                    OnWorldInfoReceived));
         }
 
         private void OnDestroy()
@@ -325,6 +464,9 @@ namespace Networking
 
             var router =
                 new ClientMessageRouter();
+
+            InstallClientWorldInfo(router);
+            InstallClientGameplay(router, sharesWorldWithServer: false);
 
             var worldReplication =
                 new ClientWorldReplication(
@@ -363,6 +505,9 @@ namespace Networking
 
             var router =
                 new ServerMessageRouter();
+
+            InstallServerWorldInfo();
+            InstallServerGameplay(router);
 
             var playerMovement =
                 new ServerPlayerMovement(
@@ -420,6 +565,9 @@ namespace Networking
             var serverRouter =
                 new ServerMessageRouter();
 
+            InstallServerWorldInfo();
+            InstallServerGameplay(serverRouter);
+
             var serverPlayerMovement =
                 new ServerPlayerMovement(
                     _server,
@@ -462,6 +610,9 @@ namespace Networking
 
             var clientRouter =
                 new ClientMessageRouter();
+
+            InstallClientWorldInfo(clientRouter);
+            InstallClientGameplay(clientRouter, sharesWorldWithServer: true);
 
             var clientWorldReplication =
                 new ClientWorldReplication(
@@ -628,6 +779,7 @@ namespace Networking
         private static void ResetStaticState()
         {
             Current = null;
+            SuppressAutoStart = false;
         }
     }
 }

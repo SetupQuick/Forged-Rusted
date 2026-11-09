@@ -9,7 +9,11 @@ namespace Networking
         None = 0,
         Jump = 1 << 0,
         Sprint = 1 << 1,
-        Crouch = 1 << 2
+        Crouch = 1 << 2,
+
+        // Jump key is held down (Jump is only the press). Used to swim
+        // upwards.
+        JumpHeld = 1 << 3
     }
 
     public readonly struct PlayerInputMessage
@@ -39,6 +43,9 @@ namespace Networking
 
         public bool Crouch =>
             (Buttons & PlayerInputButtons.Crouch) != 0;
+
+        public bool JumpHeld =>
+            (Buttons & PlayerInputButtons.JumpHeld) != 0;
 
         public PlayerInputMessage(
             uint networkId,
@@ -101,7 +108,8 @@ namespace Networking
             const PlayerInputButtons allowedButtons =
                 PlayerInputButtons.Jump |
                 PlayerInputButtons.Sprint |
-                PlayerInputButtons.Crouch;
+                PlayerInputButtons.Crouch |
+                PlayerInputButtons.JumpHeld;
 
             if (inputSequence == 0 ||
                 !IsFinite(moveX) ||

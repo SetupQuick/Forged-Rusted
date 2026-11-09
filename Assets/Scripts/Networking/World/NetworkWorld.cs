@@ -23,6 +23,12 @@ namespace Networking
 
         public int ObjectCount => _objects.Count;
 
+        /// <summary>For scenes built from code (see GameBootstrap).</summary>
+        public void SetPrefabRegistry(NetPrefabRegistry registry)
+        {
+            prefabRegistry = registry;
+        }
+
         public IEnumerable<NetObject> Objects =>
             _objects.Values;
 
