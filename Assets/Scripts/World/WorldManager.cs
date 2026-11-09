@@ -158,6 +158,12 @@ namespace World
         /// </summary>
         public event Action<Vector3Int, BlockId> BlockChanged;
 
+        /// <summary>
+        /// Raised when a block in a loaded chunk changed (voxel, old block,
+        /// new block). Used for sounds and effects.
+        /// </summary>
+        public event Action<Vector3Int, BlockId, BlockId> BlockReplaced;
+
         /// <summary>Raised whenever a world (re)initialises with a seed.</summary>
         public event Action<WorldManager> WorldReady;
 
@@ -296,6 +302,10 @@ namespace World
             {
                 gameObject.AddComponent<VoxelAtmosphere>();
             }
+
+            // Block break/place sounds and underwater muffling.
+            if (_renderingEnabled && GetComponent<GameAudio.WorldAudio>() == null)
+                gameObject.AddComponent<GameAudio.WorldAudio>();
 
             Debug.Log(
                 $"World initialised: seed {seed}, " +
@@ -438,6 +448,7 @@ namespace World
                 existing != null &&
                 !_dirty.Contains(coord))
             {
+                existing.EnsureColliderNow();
                 return;
             }
 
@@ -449,6 +460,29 @@ namespace World
             ChunkMeshResult result = ChunkMeshBuilder.Build(neighbourhood, _renderingEnabled, Seed, VoxelSize);
 
             ApplyMesh(result, colliderImmediately: true);
+        }
+
+        /// <summary>
+        /// Makes sure a player at this chunk can never fall through or walk
+        /// into missing collision: the chunk itself is built now if needed,
+        /// and neighbours that already exist get their colliders finished.
+        /// Neighbours still loading are left to the background (they are
+        /// next in line, nearest first).
+        /// </summary>
+        public void EnsureCollisionAround(ChunkCoord center)
+        {
+            EnsureChunkReadyNow(center);
+
+            for (int dz = -1; dz <= 1; dz++)
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                if ((dx != 0 || dz != 0) &&
+                    _views.TryGetValue(new ChunkCoord(center.X + dx, center.Z + dz), out ChunkView view) &&
+                    view != null)
+                {
+                    view.EnsureColliderNow();
+                }
+            }
         }
 
         /// <summary>
@@ -655,8 +689,9 @@ namespace World
             WorldToLocalPosition(worldX, worldZ, coord, out int localX, out int localZ);
 
             bool loaded = _chunks.TryGetValue(coord, out ChunkData chunk);
+            BlockId previous = loaded ? chunk.GetBlock(localX, worldY, localZ) : BlockId.Air;
 
-            if (loaded && chunk.GetBlock(localX, worldY, localZ) == block)
+            if (loaded && previous == block)
                 return;
 
             if (!_edits.TryGetValue(coord, out Dictionary<int, BlockId> chunkEdits))
@@ -690,6 +725,9 @@ namespace World
             }
 
             BlockChanged?.Invoke(new Vector3Int(worldX, worldY, worldZ), block);
+
+            if (loaded)
+                BlockReplaced?.Invoke(new Vector3Int(worldX, worldY, worldZ), previous, block);
         }
 
         /// <summary>All remembered player edits (voxel position, block).</summary>

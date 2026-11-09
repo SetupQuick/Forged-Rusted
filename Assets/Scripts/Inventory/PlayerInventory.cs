@@ -346,7 +346,23 @@ namespace Items
         // item entities.
         private void UpdatePickupTarget()
         {
+            PickupItem previous = _pickupTarget;
             _pickupTarget = null;
+            FindPickupTarget();
+
+            // Outline the item being looked at (if it has an OutlineObject).
+            if (previous != _pickupTarget)
+            {
+                if (previous != null && previous.TryGetComponent(out OutlineObject oldOutline))
+                    oldOutline.EnableHighlight(false);
+
+                if (_pickupTarget != null && _pickupTarget.TryGetComponent(out OutlineObject newOutline))
+                    newOutline.EnableHighlight(true);
+            }
+        }
+
+        private void FindPickupTarget()
+        {
 
             if (playerCamera == null || !playerCamera.isActiveAndEnabled)
                 playerCamera = Camera.main;

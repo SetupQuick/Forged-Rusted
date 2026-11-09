@@ -59,3 +59,49 @@ Built from code when the local player spawns - no scene setup needed.
 
 Not done yet: health bar (there is no health system yet), dropping
 items into the world.
+
+## Looking at things
+
+* Blocks: every frame a voxel raycast (`Gameplay/VoxelRaycast`) steps
+  through the block data from the camera, up to 5 m. The hit voxel gets
+  an outline and its name is shown under the crosshair. It also hits
+  grass and flowers (no colliders needed).
+* Items lying in the world (`PickupItem`, offline only): a physics raycast;
+  the prompt shows "[E] Pick up <name>", and the item is outlined if it
+  has an `OutlineObject` component.
+
+## Collision
+
+* Tree canopies keep at least 2.4 m of free space above the ground in
+  every column (also on slopes), so players never catch on leaves at
+  head height. Measured over a generated forest: 0 head-height traps
+  (was 8.9% of the forest floor). Bushes and boulders stay low on purpose:
+  walk around them or step onto them (step height 1 m standing).
+* Jumping into a ceiling (cave roof, canopy, block) stops the upward
+  speed immediately instead of sticking to it.
+* The chunk under every player is built immediately, and the colliders of
+  the 8 chunks around it are finished before you can reach them, so you
+  never walk into terrain whose collision is still being built.
+* Placing a block inside any player is refused by the server.
+
+## Character model and animation (`Player/AvatarModel`, `Player/PlayerAvatar`)
+
+There was no player model in the project, so there is a voxel character
+built in code: boots, trousers with knees, tunic with belt, face, hair;
+colours differ per player. Animated in code from how the player moves
+(works the same for every player without extra network data): walk/run
+cycle with knee bend, idle breathing, jump/fall pose, swimming strokes,
+crouch (own player). Your own body only casts a shadow (first person).
+
+Not replicated yet: other players' crouch and look-up/down pitch.
+Replace with a modelled + animated character whenever the team has one
+(keep `PlayerAvatar` as the place that drives it).
+
+## Sounds (`Audio/`)
+
+No audio files exist yet, so sounds are generated at startup
+(`SoundSynth`): footsteps by surface (grass, dirt, stone, sand, snow,
+wood, water), landing, block break and place by material, splash when
+entering water, swim strokes. Other players' sounds are positional.
+Hearing is muffled while your head is under water. Swap in recorded
+sounds later in `GameSounds`.

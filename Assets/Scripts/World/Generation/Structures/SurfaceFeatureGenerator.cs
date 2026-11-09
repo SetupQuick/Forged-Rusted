@@ -42,6 +42,10 @@ namespace World.Generation.Structures
         private readonly int _reach;
         private readonly double _densityPerCell;
 
+        // Free space (in voxels) kept under tree canopies so a 2 m
+        // player can walk underneath without catching on leaves.
+        private readonly int _clearance;
+
         public int MaxHorizontalReach => _reach;
 
         public SurfaceFeatureGenerator(TerrainConfig config)
@@ -57,6 +61,7 @@ namespace World.Generation.Structures
 
             // Largest canopy radius plus side blobs (see PlaceRoundTree).
             _reach = (int)Math.Ceiling(4.5 * _metres);
+            _clearance = (int)Math.Ceiling(2.4 * _metres);
         }
 
         public void Generate(ChunkGenerationContext context)
@@ -208,7 +213,7 @@ namespace World.Generation.Structures
                     break;
 
                 case Feature.Bush:
-                    PlaceBlob(context, x, groundY + 1, z, M(0.6 + random.NextDouble() * 0.5), 0.8, PickLeaves(context, x, z, ref random), 0x8053);
+                    PlaceBlob(context, x, groundY + 1, z, M(0.6 + random.NextDouble() * 0.5), 0.8, PickLeaves(context, x, z, ref random), 0x8053, clearance: 0);
                     break;
 
                 case Feature.Cactus:
@@ -272,7 +277,7 @@ namespace World.Generation.Structures
             // Canopy: one main blob and a few side blobs give a lumpy,
             // natural crown.
             double radius = M(1.9 + random.NextDouble() * 0.7) * size;
-            PlaceBlob(context, x, top + (int)(radius * 0.25), z, radius, 0.8, leaves, 0x1EAF);
+            PlaceBlob(context, x, top + (int)(radius * 0.25), z, radius, 0.8, leaves, 0x1EAF, _clearance);
 
             int sideBlobs = random.Range(3, 7);
 
@@ -287,7 +292,7 @@ namespace World.Generation.Structures
                 int by = top - (int)(radius * 0.4) + random.Range(0, (int)(radius * 0.6) + 1);
                 double sideRadius = radius * (0.55 + random.NextDouble() * 0.15);
 
-                PlaceBlob(context, bx, by, bz, sideRadius, 0.9, leaves, 0x51DE + i);
+                PlaceBlob(context, bx, by, bz, sideRadius, 0.9, leaves, 0x51DE + i, _clearance);
 
                 // A branch from the trunk towards the side blob.
                 int steps = (int)distance;
@@ -295,7 +300,11 @@ namespace World.Generation.Structures
                 {
                     int lx = x + (int)Math.Round(dirX * s * 0.8);
                     int lz = z + (int)Math.Round(dirZ * s * 0.8);
-                    SetLog(context, lx, top - 1 + s / 3, lz, BlockId.Log);
+                    int branchY = top - 1 + s / 3;
+
+                    // Branches never hang into the walking space.
+                    if (branchY >= context.GetColumn(lx, lz).Height + 1 + _clearance)
+                        SetLog(context, lx, branchY, lz, BlockId.Log);
                 }
             }
         }
@@ -335,11 +344,11 @@ namespace World.Generation.Structures
                     double d = Math.Sqrt(dx * dx + dz * dz) + Jitter(context, x + dx, y, z + dz, 0.6);
 
                     if (d <= r)
-                        SetLeaves(context, x + dx, y, z + dz, BlockId.PineLeaves);
+                        SetLeaves(context, x + dx, y, z + dz, BlockId.PineLeaves, _clearance);
                 }
             }
 
-            SetLeaves(context, x, top + 1, z, BlockId.PineLeaves);
+            SetLeaves(context, x, top + 1, z, BlockId.PineLeaves, _clearance);
         }
 
         private void PlaceAcacia(
@@ -382,7 +391,7 @@ namespace World.Generation.Structures
                 double layerRadius = dy == thickness ? radius * 0.6 : radius;
 
                 if (d <= layerRadius)
-                    SetLeaves(context, cx + dx, top + 1 + dy, cz + dz, BlockId.Leaves);
+                    SetLeaves(context, cx + dx, top + 1 + dy, cz + dz, BlockId.Leaves, _clearance);
             }
         }
 
@@ -452,7 +461,8 @@ namespace World.Generation.Structures
             double radius,
             double verticalSquash,
             BlockId leaves,
-            int salt)
+            int salt,
+            int clearance)
         {
             int ri = (int)Math.Ceiling(radius);
 
@@ -465,7 +475,7 @@ namespace World.Generation.Structures
                 d += Jitter(context, cx + dx, cy + dy, cz + dz, 0.9, salt);
 
                 if (d <= radius)
-                    SetLeaves(context, cx + dx, cy + dy, cz + dz, leaves);
+                    SetLeaves(context, cx + dx, cy + dy, cz + dz, leaves, clearance);
             }
         }
 
@@ -488,8 +498,15 @@ namespace World.Generation.Structures
             PlaceIfReplaceable(context, x, y, z, block, replaceGround: false, replaceLeaves: true);
         }
 
-        private static void SetLeaves(ChunkGenerationContext context, int x, int y, int z, BlockId block)
+        /// <param name="clearance">
+        /// Voxels kept free above the ground in this column (0 = none, for
+        /// bushes). Checked per column, so canopies over slopes stay clear too.
+        /// </param>
+        private static void SetLeaves(ChunkGenerationContext context, int x, int y, int z, BlockId block, int clearance)
         {
+            if (clearance > 0 && y < context.GetColumn(x, z).Height + 1 + clearance)
+                return;
+
             PlaceIfReplaceable(context, x, y, z, block, replaceGround: false);
         }
 

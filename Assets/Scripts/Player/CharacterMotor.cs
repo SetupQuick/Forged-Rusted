@@ -167,6 +167,10 @@ namespace Networking
             // Remote replicas do not participate in collision
             // simulation. Server/prediction enables it as needed.
             _controller.enabled = false;
+
+            // Visible voxel character + footsteps (skipped on a dedicated server).
+            if (GetComponent<PlayerAvatar>() == null)
+                gameObject.AddComponent<PlayerAvatar>();
         }
 
         private void Update()
@@ -287,10 +291,24 @@ namespace Networking
             velocity.y =
                 _verticalVelocity;
 
-            _controller.Move(
-                velocity *
-                deltaTime);
+            CollisionFlags flags =
+                _controller.Move(
+                    velocity *
+                    deltaTime);
+
+            // Hit the ceiling (cave roof, canopy, block above): stop
+            // moving up instead of sticking to it until gravity wins.
+            if ((flags & CollisionFlags.Above) != 0 &&
+                _verticalVelocity > 0f)
+            {
+                _verticalVelocity = 0f;
+            }
+
+            WasGrounded = _controller.isGrounded;
         }
+
+        /// <summary>On the ground after the last simulated tick.</summary>
+        public bool WasGrounded { get; private set; }
 
         private void UpdateSwimmingVelocity(
             PlayerInputMessage message,

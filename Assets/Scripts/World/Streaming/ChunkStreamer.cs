@@ -102,7 +102,7 @@ namespace World.Streaming
                 return;
 
             for (int i = 0; i < _targets.Count; i++)
-                worldManager.EnsureChunkReadyNow(_targets[i].Center);
+                worldManager.EnsureCollisionAround(_targets[i].Center);
 
             if (TargetsUnchanged())
                 return;

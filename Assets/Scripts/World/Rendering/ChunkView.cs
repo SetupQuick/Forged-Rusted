@@ -127,6 +127,24 @@ namespace World.Rendering
             UploadChild(_detail, result.Detail, "Details");
         }
 
+        /// <summary>
+        /// Finishes a pending background collider bake right now (waits
+        /// for it). Used for chunks a player is standing in or next to.
+        /// </summary>
+        public void EnsureColliderNow()
+        {
+            if (_bakingMesh == null)
+                return;
+
+            _bakeTask?.Wait();
+
+            Mesh baked = _bakingMesh;
+            _bakingMesh = null;
+            _bakeTask = null;
+
+            SetCollider(baked);
+        }
+
         private void Update()
         {
             if (_bakingMesh != null && _bakeTask != null && _bakeTask.IsCompleted)
