@@ -134,8 +134,9 @@ namespace GameUI
             UiBuilder.AddOutline(_itemName, new Color(0, 0, 0, 0.7f), 1.5f);
 
             // Controls hint.
-            TextMeshProUGUI hint = UiBuilder.Text("Hint", root, 16, TextAlignmentOptions.BottomLeft, new Color(1, 1, 1, 0.55f));
-            UiBuilder.Place(hint.rectTransform, new Vector2(0, 0), new Vector2(0, 0), new Vector2(16, 12), new Vector2(700, 24));
+            // Bottom right, clear of the hotbar in the middle.
+            TextMeshProUGUI hint = UiBuilder.Text("Hint", root, 16, TextAlignmentOptions.BottomRight, new Color(1, 1, 1, 0.55f));
+            UiBuilder.Place(hint.rectTransform, new Vector2(1, 0), new Vector2(1, 0), new Vector2(-16, 12), new Vector2(560, 44));
             hint.text = "LMB break   RMB place   1-9 / wheel hotbar   Tab inventory   Space swim up   Ctrl/C dive";
         }
 

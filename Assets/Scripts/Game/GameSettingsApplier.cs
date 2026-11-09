@@ -14,6 +14,8 @@ namespace Game
     /// </summary>
     public sealed class GameSettingsApplier : MonoBehaviour
     {
+        private const float NearClip = 0.05f;
+
         private int _appliedQuality = int.MinValue;
         private bool _screenApplied;
         private bool _dirty = true;
@@ -93,6 +95,11 @@ namespace Game
             Camera camera = Camera.main;
             if (camera != null && !Mathf.Approximately(camera.fieldOfView, GameSettings.FieldOfView))
                 camera.fieldOfView = GameSettings.FieldOfView;
+
+            // The player is 0.6 m wide; a near plane of 0.3 m (the prefab
+            // value) lets you see into blocks when standing against them.
+            if (camera != null && camera.nearClipPlane > NearClip)
+                camera.nearClipPlane = NearClip;
 
             ChunkStreamer streamer = ChunkStreamerCache.Get();
             if (streamer != null && streamer.RenderDistance != GameSettings.RenderDistance)
