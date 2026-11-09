@@ -47,6 +47,7 @@ namespace Game
         private bool _backdropPlaced;
 
         private string _message = string.Empty;
+        private string _pendingHudMessage;
         private NetworkRuntime _subscribedRuntime;
 
         public static GameFlow Instance { get; private set; }
@@ -75,7 +76,7 @@ namespace Game
         // Starting and leaving games
         // ------------------------------------------------------------
 
-        public void Host(ushort port)
+        public void Host(ushort port, string worldName = null)
         {
             NetworkRuntime runtime = NetworkRuntime.Current;
 
@@ -85,19 +86,25 @@ namespace Game
                 return;
             }
 
+            string loadMessage;
+
             try
             {
-                WorldManager.Active?.PrepareForHosting();
+                // Load the saved world (or create it) before anyone connects.
+                loadMessage = HostedWorld.Open(string.IsNullOrWhiteSpace(worldName) ? GameSettings.LastWorld : worldName);
                 runtime.StartRuntime(NetworkMode.ListenServer, string.Empty, port);
+                HostedWorld.AttachServer(runtime);
             }
             catch (Exception exception)
             {
                 Debug.LogException(exception);
+                HostedWorld.Close();
                 runtime.Shutdown();
                 ShowMainMenu($"Could not host on port {port}: {exception.Message}");
                 return;
             }
 
+            _pendingHudMessage = loadMessage;
             EnterPlaying();
         }
 
@@ -130,6 +137,8 @@ namespace Game
         /// <summary>Leaves the current game and returns to the main menu.</summary>
         public void Leave(string message = "")
         {
+            // Hosting: save before the server goes away.
+            HostedWorld.Close();
             UnsubscribeRuntime();
             NetworkRuntime.Current?.Shutdown();
 
@@ -141,6 +150,8 @@ namespace Game
 
         public void Quit()
         {
+            HostedWorld.Close();
+
 #if UNITY_EDITOR
             UnityEditor.EditorApplication.isPlaying = false;
 #else
@@ -196,6 +207,13 @@ namespace Game
         private void Update()
         {
             Keyboard keyboard = Keyboard.current;
+
+            // "Loaded world ..." once the HUD exists (it appears with the player).
+            if (_pendingHudMessage != null && GameHud.Instance != null)
+            {
+                GameHud.Instance.ShowMessage(_pendingHudMessage, 5f);
+                _pendingHudMessage = null;
+            }
 
             if (BenchmarkRunner.Running)
             {
@@ -409,12 +427,23 @@ namespace Game
             RectTransform screen = NewScreen(0.55f);
             _back.Push(() => ShowMainMenu());
 
-            Image panel = MenuWidgets.Panel(screen, new Vector2(640f, 380f));
+            Image panel = MenuWidgets.Panel(screen, new Vector2(680f, 560f));
             RectTransform column = MenuWidgets.Column(panel.rectTransform, 12f, 560f);
             UiBuilder.Place(column, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -30f), new Vector2(560f, 0f));
 
             MenuWidgets.Header(column, "Host a game", 34f);
             MenuWidgets.Label(column, "Others on your network join with your IP address.", 19f);
+
+            string worldName = GameSettings.LastWorld;
+            MenuWidgets.TextField(column, "World", worldName, "World 1", v => worldName = v);
+
+            List<string> worlds = World.Saving.WorldSaveFile.ListWorlds(World.Saving.WorldSaver.SavesRoot);
+            MenuWidgets.Label(column, worlds.Count == 0
+                ? "A new world is created and saved automatically."
+                : "Saved worlds: " + string.Join(", ", worlds.GetRange(0, Math.Min(6, worlds.Count))) + "  (a new name creates a new world)", 17f);
+
+            string playerName = LocalPlayerProfile.Name;
+            MenuWidgets.TextField(column, "Your name", playerName, "Player", v => playerName = v);
 
             string port = GameSettings.LastPort.ToString();
             MenuWidgets.TextField(column, "Port", port, GameBootstrap.DefaultPort.ToString(), v => port = v, TMP_InputField.ContentType.IntegerNumber);
@@ -423,8 +452,10 @@ namespace Game
             {
                 ushort p = ParsePort(port);
                 GameSettings.LastPort = p;
+                GameSettings.LastWorld = string.IsNullOrWhiteSpace(worldName) ? "World 1" : worldName.Trim();
                 GameSettings.Save();
-                Host(p);
+                LocalPlayerProfile.Name = playerName;
+                Host(p, GameSettings.LastWorld);
             }, primary: true);
 
             MenuWidgets.Button(column, "Back", () => ShowMainMenu());
@@ -435,7 +466,7 @@ namespace Game
             RectTransform screen = NewScreen(0.55f);
             _back.Push(() => ShowMainMenu());
 
-            Image panel = MenuWidgets.Panel(screen, new Vector2(640f, 440f));
+            Image panel = MenuWidgets.Panel(screen, new Vector2(640f, 500f));
             RectTransform column = MenuWidgets.Column(panel.rectTransform, 12f, 560f);
             UiBuilder.Place(column, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -30f), new Vector2(560f, 0f));
 
@@ -447,8 +478,13 @@ namespace Game
             MenuWidgets.TextField(column, "Server address", address, "127.0.0.1", v => address = v.Trim());
             MenuWidgets.TextField(column, "Port", port, GameBootstrap.DefaultPort.ToString(), v => port = v, TMP_InputField.ContentType.IntegerNumber);
 
+            string playerName = LocalPlayerProfile.Name;
+            MenuWidgets.TextField(column, "Your name", playerName, "Player", v => playerName = v);
+
             MenuWidgets.Button(column, "Join", () =>
             {
+                LocalPlayerProfile.Name = playerName;
+
                 if (string.IsNullOrWhiteSpace(address))
                     address = "127.0.0.1";
 

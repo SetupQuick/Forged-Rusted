@@ -85,6 +85,7 @@ namespace Game
 
         // Remembered menu input
         public static string LastAddress = "127.0.0.1";
+        public static string LastWorld = "World 1";
         public static int LastPort = 25565;
 
         public static readonly int[] FpsOptions = { 30, 60, 120, 144, 165, 240, 0 };
@@ -137,6 +138,7 @@ namespace Game
             ShowNetworkStats = PlayerPrefs.GetInt(Prefix + "ShowNetworkStats", 0) != 0;
 
             LastAddress = PlayerPrefs.GetString(Prefix + "LastAddress", "127.0.0.1");
+            LastWorld = PlayerPrefs.GetString(Prefix + "LastWorld", "World 1");
             LastPort = PlayerPrefs.GetInt(Prefix + "LastPort", 25565);
 
             _loaded = true;
@@ -179,6 +181,7 @@ namespace Game
             PlayerPrefs.SetInt(Prefix + "ShowNetworkStats", ShowNetworkStats ? 1 : 0);
 
             PlayerPrefs.SetString(Prefix + "LastAddress", LastAddress);
+            PlayerPrefs.SetString(Prefix + "LastWorld", LastWorld);
             PlayerPrefs.SetInt(Prefix + "LastPort", LastPort);
 
             PlayerPrefs.Save();

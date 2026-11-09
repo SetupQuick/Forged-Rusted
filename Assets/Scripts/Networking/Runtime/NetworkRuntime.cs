@@ -304,10 +304,25 @@ namespace Networking
             }
         }
 
+        /// <summary>
+        /// Raised at the start of Shutdown, while every module still works
+        /// (e.g. so the world saver can read the players' inventories).
+        /// </summary>
+        public event Action BeforeShutdown;
+
         public void Shutdown()
         {
             if (_shuttingDown)
                 return;
+
+            try
+            {
+                BeforeShutdown?.Invoke();
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception);
+            }
 
             _shuttingDown = true;
 

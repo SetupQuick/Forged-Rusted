@@ -37,6 +37,11 @@ namespace Networking
         }
         private uint _nextSequence = 1;
         private bool _disposed;
+        private bool _profileSent;
+
+        /// <summary>Player id/name sent to the server (defaults to this PC's profile; tests override).</summary>
+        public string ProfileId { get; set; }
+        public string ProfileName { get; set; }
 
         /// <summary>True on a listen server: the world is the server's own.</summary>
         public bool SharesWorldWithServer { get; }
@@ -116,6 +121,19 @@ namespace Networking
 
         public void Tick(double now, double deltaTime)
         {
+            // Tell the server who we are, once, so a saved world can give
+            // our inventory back.
+            if (!_profileSent && !_disposed && _client.IsConnected)
+            {
+                string id = ProfileId ?? LocalPlayerProfile.Id;
+                string name = ProfileName ?? LocalPlayerProfile.Name;
+
+                _profileSent = _client.Send(
+                    NetworkMessageType.PlayerProfile,
+                    writer => GameplayMessages.WriteProfile(writer, id, name),
+                    NetworkDelivery.ReliableOrdered);
+            }
+
             // Changes that arrived before the world had its seed.
             if (_buffer.Count > 0)
             {

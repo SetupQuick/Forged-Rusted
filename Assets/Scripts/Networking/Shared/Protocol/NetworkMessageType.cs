@@ -36,6 +36,9 @@ namespace Networking
         Equipment = 18,
 
         // Server -> clients: world clock (day/night, clouds), every few seconds.
-        TimeSync = 19
+        TimeSync = 19,
+
+        // Client -> server: persistent player id and name (for saved inventories).
+        PlayerProfile = 20
     }
 }

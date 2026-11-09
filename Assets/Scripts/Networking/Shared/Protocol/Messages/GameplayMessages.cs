@@ -295,6 +295,47 @@ namespace Networking
             }
         }
 
+        // --------------------------------------------------------------
+        // Player profile (client -> server)
+        // --------------------------------------------------------------
+
+        public const int MaxPlayerIdLength = 64;
+        public const int MaxPlayerNameLength = 24;
+
+        public static void WriteProfile(PacketWriter writer, string playerId, string name)
+        {
+            writer.Write(Clip(playerId, MaxPlayerIdLength));
+            writer.Write(Clip(name, MaxPlayerNameLength));
+        }
+
+        public static bool TryReadProfile(byte[] payload, out string playerId, out string name)
+        {
+            playerId = null;
+            name = null;
+
+            try
+            {
+                var reader = new PacketReader(payload);
+                playerId = reader.ReadString();
+                name = reader.ReadString();
+
+                return reader.Remaining == 0 &&
+                       !string.IsNullOrWhiteSpace(playerId) &&
+                       playerId.Length <= MaxPlayerIdLength &&
+                       name != null && name.Length <= MaxPlayerNameLength;
+            }
+            catch (System.InvalidOperationException)
+            {
+                return false;
+            }
+        }
+
+        private static string Clip(string value, int length)
+        {
+            value = value ?? string.Empty;
+            return value.Length > length ? value.Substring(0, length) : value;
+        }
+
         private static void WriteStack(PacketWriter writer, ItemStack stack)
         {
             writer.Write(stack.IsEmpty ? (ushort)0 : ItemDatabase.GetNetworkId(stack.Item));

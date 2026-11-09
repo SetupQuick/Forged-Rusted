@@ -38,8 +38,20 @@ namespace Networking
         // command) visible quickly without costing bandwidth.
         private const double TimeSyncInterval = 5.0;
 
+        // Saved players (id -> data): from the world save, plus everyone who
+        // left this session. Connected players are exported live.
+        private readonly Dictionary<string, global::World.Saving.PlayerSaveData> _savedPlayers =
+            new Dictionary<string, global::World.Saving.PlayerSaveData>();
+
+        /// <summary>Changes whenever any player's saved state may have changed.</summary>
+        public int PlayersVersion { get; private set; }
+
         private sealed class PlayerState
         {
+            // Persistent identity (from PlayerProfile); null until received.
+            public string ProfileId;
+            public string ProfileName;
+
             public Peer Peer;
             public InventoryContainer Inventory;
             public ItemStack Held;
@@ -67,6 +79,104 @@ namespace Networking
             _server.PeerConnected += OnPeerConnected;
             _server.PeerDisconnected += OnPeerDisconnected;
             _router.Register(NetworkMessageType.PlayerAction, OnPlayerAction);
+            _router.Register(NetworkMessageType.PlayerProfile, OnPlayerProfile);
+        }
+
+        // ------------------------------------------------------------
+        // Saving
+        // ------------------------------------------------------------
+
+        /// <summary>Players from a world save; they get their inventory back when they connect.</summary>
+        public void ImportPlayers(Dictionary<string, global::World.Saving.PlayerSaveData> players)
+        {
+            if (players == null)
+                return;
+
+            foreach (KeyValuePair<string, global::World.Saving.PlayerSaveData> player in players)
+                _savedPlayers[player.Key] = player.Value;
+
+            // Players already connected (e.g. the host) pick theirs up now.
+            foreach (PlayerState state in _players.Values)
+                if (state.ProfileId != null)
+                    RestorePlayer(state);
+        }
+
+        /// <summary>Every player to save: connected ones as they are now, plus everyone known.</summary>
+        public Dictionary<string, global::World.Saving.PlayerSaveData> ExportPlayers()
+        {
+            var result = new Dictionary<string, global::World.Saving.PlayerSaveData>(_savedPlayers);
+
+            foreach (PlayerState state in _players.Values)
+                if (state.ProfileId != null)
+                    result[state.ProfileId] = Export(state);
+
+            return result;
+        }
+
+        private void OnPlayerProfile(Peer peer, byte[] payload)
+        {
+            if (!_players.TryGetValue(peer.Id, out PlayerState state) || state.ProfileId != null)
+                return; // unknown peer, or already identified (the id cannot change mid-game)
+
+            if (!GameplayMessages.TryReadProfile(payload, out string id, out string name))
+                return;
+
+            // The same id twice at once (copied PlayerPrefs): the second
+            // one plays with a fresh inventory instead of sharing one.
+            foreach (PlayerState other in _players.Values)
+                if (other.ProfileId == id)
+                    return;
+
+            state.ProfileId = id;
+            state.ProfileName = name;
+            RestorePlayer(state);
+        }
+
+        private void RestorePlayer(PlayerState state)
+        {
+            if (!_savedPlayers.TryGetValue(state.ProfileId, out global::World.Saving.PlayerSaveData saved))
+                return;
+
+            var slots = new ItemStack[state.Inventory.Count];
+            for (int i = 0; i < slots.Length && i < saved.Slots.Count; i++)
+            {
+                (string itemId, int count) = saved.Slots[i];
+
+                if (itemId != null && count > 0 && ItemDatabase.TryGet(itemId, out ItemData item))
+                    slots[i] = new ItemStack(item, Math.Min(count, Math.Max(1, item.maxStackSize)));
+            }
+
+            state.Inventory.SetAll(slots, notify: false);
+            state.Held = ItemStack.Empty;
+            state.InventoryDirty = true;
+            PlayersVersion++;
+        }
+
+        private static global::World.Saving.PlayerSaveData Export(PlayerState state)
+        {
+            var data = new global::World.Saving.PlayerSaveData
+            {
+                Name = state.ProfileName ?? string.Empty,
+                SelectedSlot = state.SelectedSlot
+            };
+
+            bool heldStored = state.Held.IsEmpty;
+
+            for (int i = 0; i < state.Inventory.Count; i++)
+            {
+                ItemStack stack = state.Inventory[i];
+
+                // Something still on the cursor goes into the first free slot.
+                if (stack.IsEmpty && !heldStored)
+                {
+                    stack = state.Held;
+                    heldStored = true;
+                }
+
+                data.Slots.Add(stack.IsEmpty ? (null, 0) : (stack.Item.Id, stack.Count));
+            }
+
+            return data;
         }
 
         /// <summary>Server copy of a player's inventory (tests, saving later).</summary>
@@ -167,6 +277,7 @@ namespace Networking
             _server.PeerConnected -= OnPeerConnected;
             _server.PeerDisconnected -= OnPeerDisconnected;
             _router.Unregister(NetworkMessageType.PlayerAction, OnPlayerAction);
+            _router.Unregister(NetworkMessageType.PlayerProfile, OnPlayerProfile);
 
             if (_subscribedToWorld)
                 _world.BlockChanged -= OnWorldBlockChanged;
@@ -222,6 +333,13 @@ namespace Networking
 
         private void OnPeerDisconnected(uint peerId)
         {
+            // Remember who left, so the next save (and their next join) has them.
+            if (_players.TryGetValue(peerId, out PlayerState state) && state.ProfileId != null)
+            {
+                _savedPlayers[state.ProfileId] = Export(state);
+                PlayersVersion++;
+            }
+
             _players.Remove(peerId);
         }
 
@@ -244,6 +362,7 @@ namespace Networking
 
             state.LastSequence = action.Sequence;
             state.InventoryDirty = true; // always acknowledge
+            PlayersVersion++;
 
             switch (action.Type)
             {

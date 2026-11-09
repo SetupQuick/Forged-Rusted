@@ -271,6 +271,12 @@ namespace World
         /// seed if the settings ask for one (the menu backdrop uses the
         /// settings seed until then).
         /// </summary>
+        /// <summary>Dedicated server: nothing is drawn (call before the world starts).</summary>
+        public void DisableRendering()
+        {
+            _renderingEnabled = false;
+        }
+
         public void PrepareForHosting()
         {
             if (settings.UseRandomSeed)
@@ -517,6 +523,73 @@ namespace World
         /// <summary>
         /// (Re)creates the world for a seed. Existing chunks are dropped.
         /// </summary>
+        /// <summary>Incremented on every player edit (the saver compares it to see unsaved changes).</summary>
+        public long ChangeCount { get; private set; }
+
+        /// <summary>
+        /// Everything a save needs, copied on the main thread so it can be
+        /// written on a worker thread while the game goes on.
+        /// </summary>
+        public Saving.WorldSaveData CaptureSave()
+        {
+            var data = new Saving.WorldSaveData
+            {
+                Seed = Seed,
+                GeneratorVersion = TerrainConfig.GeneratorVersion,
+                SettingsFingerprint = Config != null ? Config.SettingsFingerprint : 0,
+                WorldSeconds = WorldClock.WorldSeconds,
+                DayLengthSeconds = WorldClock.DayLengthSeconds,
+                StartTimeOfDay = WorldClock.StartTimeOfDay
+            };
+
+            foreach (KeyValuePair<ChunkCoord, Dictionary<int, BlockId>> chunkEdits in _edits)
+                data.Edits[chunkEdits.Key] = new Dictionary<int, BlockId>(chunkEdits.Value);
+
+            return data;
+        }
+
+        /// <summary>
+        /// Starts the world from a save: its seed, clock and every player
+        /// edit (applied to chunks as they are generated). Any world that
+        /// was running (e.g. the menu backdrop) is thrown away first.
+        /// </summary>
+        public void LoadSave(Saving.WorldSaveData data)
+        {
+            if (data == null)
+                throw new ArgumentNullException(nameof(data));
+
+            if (IsReady)
+                ResetWorld();
+
+            // Edits first: anything listening to WorldReady may already
+            // ask for chunks, and those must include the edits.
+            foreach (KeyValuePair<ChunkCoord, Dictionary<int, BlockId>> chunkEdits in data.Edits)
+                _edits[chunkEdits.Key] = new Dictionary<int, BlockId>(chunkEdits.Value);
+
+            InitializeWorld(data.Seed);
+
+            if (data.GeneratorVersion != TerrainConfig.GeneratorVersion)
+            {
+                Debug.LogWarning(
+                    $"This world was saved with world generator version {data.GeneratorVersion} " +
+                    $"(now {TerrainConfig.GeneratorVersion}); unexplored land may look different.");
+            }
+
+            WorldClock.Restore(data.WorldSeconds, data.DayLengthSeconds, data.StartTimeOfDay);
+
+            ChangeCount = 0;
+        }
+
+        /// <summary>Starts a brand-new world for hosting (random seed if the settings say so).</summary>
+        public void StartNewWorld()
+        {
+            if (IsReady)
+                ResetWorld();
+
+            InitializeWorld(settings.UseRandomSeed ? ResolveServerSeed() : settings.Seed);
+            ChangeCount = 0;
+        }
+
         public void InitializeWorld(int seed)
         {
             if (IsReady && seed == Seed)
@@ -968,6 +1041,7 @@ namespace World
             }
 
             chunkEdits[EditKey(localX, worldY, localZ)] = block;
+            ChangeCount++;
 
             if (loaded)
             {

@@ -72,3 +72,9 @@ Game.exe -nomenu                   old behaviour (NetworkRuntime starts by itsel
   rebinding screen).
 * Music and its volume slider (there is no music yet).
 * Player names, server browser / LAN discovery.
+
+## Hosting a saved world
+
+The host screen asks for a world name and your player name. Worlds are
+saved automatically - see [Saving.md](Saving.md). The join screen also
+asks for your name; your inventory is kept per world on the host.

@@ -191,15 +191,21 @@ Players in the same area share chunks, so real numbers are lower.
   players. Where those are outside the host's own view they now get only
   collision meshes - nothing is built or drawn for them.
 
-### Bandwidth (not changed yet)
+### Bandwidth
 
-Every player's position is sent to every other player 33 times a
-second, with no distance filtering, so it grows with players squared:
-about 0.9 Mbit/s server upload at 10 players, 3.6 at 20, 23 at 50 (each
-client receives only ~12-60 KB/s). Fine for a group of friends; for
-bigger servers the next step is **interest management** - only send
-players within view distance, and nearby players more often than far
-ones.
+Each player is only told about objects within 210 m of them (they stay
+until 240 m, so nothing flickers at the edge). Changed positions are sent
+every tick within 48 m, every 2nd tick to 112 m and every 4th tick
+beyond; when more updates are due than fit, the longest-waiting go first,
+and crowds get up to two packets per tick so nearby players still update
+every tick.
+
+So traffic depends on how many players are *near* you, not on how many
+are on the server. Measured: 50 moving players within 210 m of one
+player = about 44 KB/s to that player; players spread across the world
+cost each other nothing. Before, every player received every other
+player every tick (server upload grew with players squared: ~23 Mbit/s
+at 50 players).
 
 ## How heavy are wind and shadows?
 
@@ -254,14 +260,10 @@ globals per frame.
 
 ## Next steps (not done yet)
 
-* **World saving**: there is none yet. Plan: save only player edits (the
-  edit overlay already holds them) per region file, written on a worker
-  thread every few minutes and on quit - never the generated terrain,
-  which is recreated from the seed. Keeps saves tiny and fast.
+* **World saving**: done - see [Saving.md](Saving.md).
 * **Palette compression** of mixed sections (4-bit indices when a
   section has at most 16 block types): 110 -> ~48 KB per chunk. Costs a
   little speed on every block read, so only worth it for big servers.
-* **Interest management** for player updates (see Bandwidth).
 * **Vertex compression**: positions as 16-bit, normals as one byte
   index, colours already 8-bit -> ~16 bytes per vertex instead of 36.
   Roughly halves GPU mesh memory and vertex bandwidth.

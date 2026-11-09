@@ -52,6 +52,15 @@ namespace World
             Changed?.Invoke();
         }
 
+        /// <summary>Continues a saved world's clock exactly where it stopped.</summary>
+        public static void Restore(double worldSeconds, float dayLengthSeconds, float startTimeOfDay)
+        {
+            DayLengthSeconds = Math.Max(10f, dayLengthSeconds);
+            StartTimeOfDay = startTimeOfDay - (float)Math.Floor(startTimeOfDay);
+            WorldSeconds = Math.Max(0, double.IsNaN(worldSeconds) ? 0 : worldSeconds);
+            Changed?.Invoke();
+        }
+
         public static void Advance(double deltaSeconds)
         {
             if (!Paused && deltaSeconds > 0)

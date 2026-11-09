@@ -16,8 +16,10 @@ namespace Game
     ///   4. otherwise shows the main menu instead of starting a game.
     ///
     /// Command line:
-    ///   -server [-port 25565]      dedicated server, no menu
-    ///   -host [-port 25565]        host straight away
+    ///   -server [-port 25565] [-world name]
+    ///                              dedicated server, no menu; the world is
+    ///                              saved in persistentDataPath/worlds/name
+    ///   -host [-port 25565] [-world name]   host straight away
     ///   -connect 1.2.3.4[:port]    join straight away
     ///   -benchmark [-quit]         run the graphics benchmark (and quit when done)
     ///   -nomenu                    old behaviour: NetworkRuntime starts by itself
@@ -55,7 +57,12 @@ namespace Game
             if (dedicated)
             {
                 CreatePersistentObjects(withMenu: false);
+
+                // The world is loaded from (and saved to) its folder.
+                WorldManager.Active?.DisableRendering();
+                Debug.Log(HostedWorld.Open(GetArgValue(args, "-world") ?? "world"));
                 StartWhenReady(NetworkMode.DedicatedServer, string.Empty, port);
+                HostedWorld.AttachServer(NetworkRuntime.Current);
                 return;
             }
 
@@ -78,7 +85,7 @@ namespace Game
             }
             else if (HasArg(args, "-host"))
             {
-                flow.Host(port);
+                flow.Host(port, GetArgValue(args, "-world"));
             }
             else if (HasArg(args, "-benchmark"))
             {
