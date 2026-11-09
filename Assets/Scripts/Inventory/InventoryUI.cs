@@ -17,7 +17,9 @@ namespace GameUI
     ///   shift + click     move between hotbar and backpack
     ///
     /// While open, the player stops moving and the cursor is free.
-    /// Built by <see cref="GameHud"/>; needs no scene setup.
+    /// Clicks go through <see cref="PlayerInventory"/>, which predicts them
+    /// and lets the server confirm them. Built by <see cref="GameHud"/>;
+    /// needs no scene setup.
     /// </summary>
     public class InventoryUI : MonoBehaviour
     {
@@ -34,7 +36,8 @@ namespace GameUI
         private TextMeshProUGUI _heldCount;
         private RectTransform _tooltip;
         private TextMeshProUGUI _tooltipText;
-        private ItemStack _held;
+
+        private ItemStack Held => _inventory != null ? _inventory.Held : ItemStack.Empty;
 
         public bool IsOpen => _root != null && _root.activeSelf;
 
@@ -107,6 +110,7 @@ namespace GameUI
             _tooltip.gameObject.SetActive(false);
 
             container.Changed += Refresh;
+            inventory.HeldChanged += Refresh;
             _root.SetActive(false);
             Refresh();
         }
@@ -118,7 +122,10 @@ namespace GameUI
             PlayerInputReader.GameplayInputBlocked = false;
 
             if (_inventory != null && _inventory.Container != null)
+            {
                 _inventory.Container.Changed -= Refresh;
+                _inventory.HeldChanged -= Refresh;
+            }
         }
 
         public void SetOpen(bool open)
@@ -131,7 +138,7 @@ namespace GameUI
 
             if (!open)
             {
-                ReturnHeldStack();
+                _inventory.CloseInventory();
                 _tooltip.gameObject.SetActive(false);
             }
 
@@ -186,24 +193,17 @@ namespace GameUI
 
         private void OnSlotClicked(ItemSlotUI slot, PointerEventData eventData)
         {
-            InventoryContainer container = _inventory.Container;
-            int index = slot.SlotIndex;
             Keyboard keyboard = Keyboard.current;
             bool shift = keyboard != null && keyboard.shiftKey.isPressed;
 
-            if (eventData.button == PointerEventData.InputButton.Left)
-            {
-                if (shift && _held.IsEmpty)
-                    container.QuickMove(index);
-                else
-                    _held = container.PlaceOrSwap(index, _held);
-            }
-            else if (eventData.button == PointerEventData.InputButton.Right)
-            {
-                _held = _held.IsEmpty
-                    ? container.TakeHalf(index)
-                    : container.PlaceOne(index, _held);
-            }
+            int button =
+                eventData.button == PointerEventData.InputButton.Left ? 0 :
+                eventData.button == PointerEventData.InputButton.Right ? 1 : -1;
+
+            if (button < 0)
+                return;
+
+            _inventory.Click(slot.SlotIndex, button, shift);
 
             Refresh();
             OnSlotHover(slot);
@@ -216,7 +216,7 @@ namespace GameUI
 
             ItemStack stack = slot.IsHovered ? _inventory.Container[slot.SlotIndex] : ItemStack.Empty;
 
-            if (stack.IsEmpty || !_held.IsEmpty)
+            if (stack.IsEmpty || !Held.IsEmpty)
             {
                 _tooltip.gameObject.SetActive(false);
                 return;
@@ -241,14 +241,16 @@ namespace GameUI
             foreach (ItemSlotUI slot in _slots)
                 slot.SetStack(_inventory.Container[slot.SlotIndex]);
 
+            ItemStack held = Held;
+
             if (_heldIcon != null)
             {
-                _heldIcon.enabled = !_held.IsEmpty;
+                _heldIcon.enabled = !held.IsEmpty;
 
-                if (!_held.IsEmpty)
+                if (!held.IsEmpty)
                 {
-                    _heldIcon.sprite = ItemIcons.Get(_held.Item);
-                    _heldCount.text = _held.Count > 1 ? _held.Count.ToString() : string.Empty;
+                    _heldIcon.sprite = ItemIcons.Get(held.Item);
+                    _heldCount.text = held.Count > 1 ? held.Count.ToString() : string.Empty;
                     _heldIcon.transform.SetAsLastSibling();
                 }
                 else
@@ -256,20 +258,6 @@ namespace GameUI
                     _heldCount.text = string.Empty;
                 }
             }
-        }
-
-        /// <summary>Puts the stack on the cursor back into the inventory.</summary>
-        private void ReturnHeldStack()
-        {
-            if (_held.IsEmpty)
-                return;
-
-            int leftover = _inventory.Container.Add(_held.Item, _held.Count);
-
-            if (leftover > 0)
-                Debug.LogWarning($"Inventory full, {leftover}x {_held.Item.DisplayName} was lost.");
-
-            _held = ItemStack.Empty;
         }
 
         private void FollowMouse(RectTransform rect, Vector2 offset)

@@ -55,6 +55,9 @@ namespace World.Generation
         private readonly FractalNoise _temperature;
         private readonly FractalNoise _humidity;
 
+        // Voxels per metre; constants below are written in metres.
+        private readonly double _metres;
+
         // Continentalness -> base height offset from sea level.
         private static readonly double[] ContinentKeys =
             { -1.00, -0.55, -0.30, -0.16, -0.08, 0.00, 0.12, 0.35, 1.00 };
@@ -75,8 +78,11 @@ namespace World.Generation
             _continent = new FractalNoise(SeedHash.Derive(seed, 101), scale, 5);
             _erosion = new FractalNoise(SeedHash.Derive(seed, 102), scale * 0.5, 4);
             _ridges = new FractalNoise(SeedHash.Derive(seed, 103), scale * 0.3, 5);
-            _hills = new FractalNoise(SeedHash.Derive(seed, 104), 150, 4);
-            _detail = new FractalNoise(SeedHash.Derive(seed, 105), 36, 3);
+            double f = config.FeatureScale;
+            _metres = f;
+
+            _hills = new FractalNoise(SeedHash.Derive(seed, 104), 150 * f, 4);
+            _detail = new FractalNoise(SeedHash.Derive(seed, 105), 36 * f, 3);
             _river = new FractalNoise(SeedHash.Derive(seed, 106), scale * 0.6, 4);
             _temperature = new FractalNoise(SeedHash.Derive(seed, 107), biome, 4);
             _humidity = new FractalNoise(SeedHash.Derive(seed, 108), biome * 0.85, 4);
@@ -89,8 +95,8 @@ namespace World.Generation
             int sea = _config.SeaLevel;
 
             // Domain warp so coastlines and ranges are not blobby.
-            double warpX = x + _detail.Sample(x * 0.05 + 311, z * 0.05) * 60;
-            double warpZ = z + _detail.Sample(x * 0.05, z * 0.05 + 977) * 60;
+            double warpX = x + _detail.Sample(x * 0.05 + 311, z * 0.05) * 60 * _metres;
+            double warpZ = z + _detail.Sample(x * 0.05, z * 0.05 + 977) * 60 * _metres;
 
             // Slight positive bias: a bit more land than ocean.
             double continent = Clamp(_continent.Sample(warpX, warpZ) * 1.8 + 0.08, -1, 1);
@@ -99,7 +105,7 @@ namespace World.Generation
 
             double landFactor = SmoothStep(-0.14, 0.04, continent);
 
-            double height = sea + Spline(continent, ContinentKeys, ContinentHeights);
+            double height = sea + Spline(continent, ContinentKeys, ContinentHeights) * _metres;
 
             // Rolling hills, stronger inland and on rugged (low erosion) land.
             double hilliness = 0.35 + 0.65 * SmoothStep(0.5, -0.5, erosion);
@@ -114,7 +120,7 @@ namespace World.Generation
             height += mountainness * peak * _config.MountainHeight;
 
             // Small surface detail everywhere.
-            height += _detail.Sample(x, z) * 2.5;
+            height += _detail.Sample(x, z) * 2.5 * _metres;
 
             bool isRiver = false;
 
@@ -133,7 +139,7 @@ namespace World.Generation
                     const double channel = 0.012;
                     const double valley = 0.075;
 
-                    double bed = sea - 4 + _detail.Sample(x * 2, z * 2);
+                    double bed = sea - 4 * _metres + _detail.Sample(x * 2, z * 2) * _metres;
                     double t = SmoothStep(channel, valley, river);
                     double carved = bed + (height - bed) * t;
 
@@ -145,7 +151,7 @@ namespace World.Generation
             }
 
             int finalHeight = (int)System.Math.Floor(height);
-            finalHeight = ClampInt(finalHeight, 6, _config.WorldHeight - 24);
+            finalHeight = ClampInt(finalHeight, 6, _config.WorldHeight - (int)(20 * _metres));
 
             // Climate. Higher ground is colder.
             double temperature = Clamp(_temperature.Sample(x, z) * 1.9, -1, 1);
@@ -153,7 +159,7 @@ namespace World.Generation
 
             double altitude = finalHeight - sea;
             if (altitude > 0)
-                temperature -= altitude / 200.0 * 0.5;
+                temperature -= altitude / (200.0 * _metres) * 0.5;
 
             var sample = new ColumnSample
             {
@@ -181,10 +187,10 @@ namespace World.Generation
             if (height < sea - 1 && !sample.IsRiver && continent < -0.02)
                 return t < -0.45 ? BiomeId.FrozenOcean : BiomeId.Ocean;
 
-            if (height <= sea + 2 && continent < 0.06 && !sample.IsRiver)
+            if (height <= sea + 2 * _metres && continent < 0.06 && !sample.IsRiver)
                 return t < -0.45 ? BiomeId.Tundra : BiomeId.Beach;
 
-            if (sample.Mountainness > 0.45 && height > sea + 45)
+            if (sample.Mountainness > 0.45 && height > sea + 45 * _metres)
                 return BiomeId.Mountains;
 
             if (t < -0.35)
@@ -197,7 +203,7 @@ namespace World.Generation
                 return BiomeId.Forest;
             }
 
-            if (h > 0.45 && height <= sea + 6)
+            if (h > 0.45 && height <= sea + 6 * _metres)
                 return BiomeId.Swamp;
 
             return h > 0.05 ? BiomeId.Forest : BiomeId.Plains;

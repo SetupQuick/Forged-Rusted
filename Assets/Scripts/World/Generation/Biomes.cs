@@ -87,64 +87,64 @@ namespace World.Generation
             Add(new BiomeDefinition(
                 BiomeId.Ocean, "Ocean",
                 BlockId.Sand, BlockId.Sand, 3, BlockId.Sand,
-                0x6DAA45, 0x4F8A2E));
+                0x74A046, 0x56883A));
 
             Add(new BiomeDefinition(
                 BiomeId.FrozenOcean, "Frozen Ocean",
                 BlockId.Gravel, BlockId.Gravel, 2, BlockId.Gravel,
-                0x80A890, 0x5E8A6E, freezesWater: true));
+                0x7FA48A, 0x5A8468, freezesWater: true));
 
             Add(new BiomeDefinition(
                 BiomeId.Beach, "Beach",
                 BlockId.Sand, BlockId.Sand, 3, BlockId.Sand,
-                0x7DB04A, 0x5E9636,
+                0x80A84C, 0x5E8E3A,
                 BlockId.Sandstone, 2));
 
             Add(new BiomeDefinition(
                 BiomeId.Plains, "Plains",
                 BlockId.Grass, BlockId.Dirt, 3, BlockId.Dirt,
-                0x79C05A, 0x5BA33B));
+                0x7BA84A, 0x5E9038));
 
             Add(new BiomeDefinition(
                 BiomeId.Forest, "Forest",
                 BlockId.Grass, BlockId.Dirt, 4, BlockId.Dirt,
-                0x5DA244, 0x3F8A2C));
+                0x6A9A3E, 0x4F8233));
 
             Add(new BiomeDefinition(
                 BiomeId.Desert, "Desert",
                 BlockId.Sand, BlockId.Sand, 4, BlockId.Sand,
-                0xBFB755, 0xAEA74A,
+                0xB4A84E, 0x9E9640,
                 BlockId.Sandstone, 5));
 
             Add(new BiomeDefinition(
                 BiomeId.Savanna, "Savanna",
                 BlockId.Grass, BlockId.Dirt, 3, BlockId.Dirt,
-                0xB5B35A, 0x9AA03E));
+                0xA9A247, 0x8C9238));
 
             Add(new BiomeDefinition(
                 BiomeId.Taiga, "Taiga",
                 BlockId.Grass, BlockId.Dirt, 3, BlockId.Gravel,
-                0x6A9A64, 0x4C7A55));
+                0x5E8C5A, 0x41704C));
 
             Add(new BiomeDefinition(
                 BiomeId.Tundra, "Tundra",
                 BlockId.Snow, BlockId.Dirt, 3, BlockId.Gravel,
-                0x8EAE8E, 0x6A8F72, freezesWater: true));
+                0x8AA88A, 0x67886E, freezesWater: true));
 
             Add(new BiomeDefinition(
                 BiomeId.Mountains, "Mountains",
                 BlockId.Stone, BlockId.Stone, 1, BlockId.Gravel,
-                0x7FA36A, 0x5C8452));
+                0x80A260, 0x5E8452));
 
             Add(new BiomeDefinition(
                 BiomeId.SnowyPeaks, "Snowy Peaks",
                 BlockId.Snow, BlockId.Stone, 1, BlockId.Gravel,
-                0x8EAE8E, 0x6A8F72, freezesWater: true));
+                0x8AA88A, 0x67886E, freezesWater: true));
 
             Add(new BiomeDefinition(
                 BiomeId.Swamp, "Swamp",
                 BlockId.Grass, BlockId.Dirt, 3, BlockId.Clay,
-                0x5E7D3A, 0x4A6B2A));
+                0x6A8240, 0x52703A));
         }
 
         public static BiomeDefinition Get(BiomeId id)

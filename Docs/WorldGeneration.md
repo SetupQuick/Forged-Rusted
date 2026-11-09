@@ -5,9 +5,12 @@ How the voxel world is generated, streamed and synced. Code lives in
 
 ## Overview
 
-* Infinite in X/Z, 256 blocks tall, sea level at 64 (all set in
-  `Assets/Scripts/Settings/DefaultWorldSettings.asset`).
-* Chunks are full-height columns of 16 x 256 x 16 blocks.
+* Small voxels: 0.5 m each by default (`voxelSize`), so a 2 m player is
+  4 voxels tall. Terrain sizes in the settings are in metres, so the
+  world keeps its proportions if the voxel size changes.
+* Infinite in X/Z, 320 voxels (160 m) tall, sea level at voxel 80 (all set
+  in `Assets/Scripts/Settings/DefaultWorldSettings.asset`).
+* Chunks are full-height columns of 32 x 320 x 32 voxels (16 m wide).
 * Generation is **deterministic**: the same seed gives exactly the same
   world on every machine (Windows client, Linux dedicated server). It uses
   its own seeded noise (pure integer hashing + double math), not
@@ -39,7 +42,7 @@ Protocol version was bumped to 6 for the new `WorldInfo` (13) message.
 | Terrain | `TerrainSampler.cs`, `SurfaceRules.cs` | Height from layered noise maps: continentalness (ocean / coast / inland), erosion, ridged mountain ranges, hills, detail, and rivers carved down to sea level. Biome from temperature + humidity. Surface layers per biome (grass/dirt, sand/sandstone, snow, rock on cliffs). Water up to sea level, ice when cold. |
 | Caves | `CaveCarver.cs` | Caverns (3D noise blobs) and winding tunnels (two 3D noises near zero). Noise is sampled on a 4-block grid and interpolated, so it is cheap. Tunnels open to the surface only in a few places (cave entrances); nothing is carved under water. |
 | Ores | `OreGenerator.cs` | Coal, copper, iron, gold, crystal veins in stone, rarer deeper down. |
-| Structures | `Structures/` | Trees (oak, tall oak, pine, acacia), bushes, cacti, boulders. |
+| Structures | `Structures/` | Round lumpy trees (some in autumn orange/red), tiered pines, flat savanna trees, bushes, cacti, mossy boulders; then grass tufts and flower patches. |
 
 Biomes: ocean, frozen ocean, beach, plains, forest, desert, savanna, taiga,
 tundra, mountains, snowy peaks, swamp (`Generation/Biomes.cs`).
@@ -89,27 +92,27 @@ constructor (`extraStructures`). Rules:
 ## Rendering
 
 * `Rendering/ChunkMeshBuilder.cs` builds one quad per visible face with
-  vertex colours (block colour x biome tint x small per-block variation)
-  and baked ambient occlusion. Water is a separate transparent mesh
-  without a collider.
+  vertex colours (block colour x biome tint x per-voxel variation); baked
+  ambient occlusion goes in the vertex alpha. Water is a separate
+  transparent mesh, grass and flowers a separate detail mesh; neither
+  has a collider. Colliders are cooked on worker threads
+  (`Physics.BakeMesh`), except under players.
+* `Rendering/VoxelAtmosphere.cs` (added automatically on clients): warm
+  sun with soft shadows, sky/ground light that the voxel shader combines
+  with the AO, ACES tone mapping, gentle bloom, colour grading.
 * Shaders: `Assets/Materials/Shaders/Voxel/` (`ForgedRusted/Voxel Lit`,
   `ForgedRusted/Voxel Water`, URP). Materials:
   `Assets/Resources/World/ChunkMaterial.mat` and `WaterMaterial.mat`
   (loaded automatically if not assigned on `WorldManager`).
-* No textures yet - the art style (textured voxels vs. low-poly) is still
-  open. Switching to textures means adding UVs in the mesher and a
-  texture atlas; colours live in `BlockRegistry`.
+* No textures: the look comes from small voxels, per-voxel colour
+  variation and lighting. Colours live in `BlockRegistry` and `Biomes`.
 
-## Block editing hook
+## Block editing
 
-`WorldManager.SetBlock` updates the data, marks the chunk as modified and
-rebuilds the affected meshes (including neighbours on chunk borders).
-Networked placing/breaking should call it on the server and replicate the
-change; that is the next step.
+See `Docs/Building.md` (server-validated breaking/placing, edit sync).
 
 ## Not done yet
 
-* Placing/breaking blocks over the network (RPC + validation).
 * Saving/loading modified chunks.
 * Dungeons and other big structures (the hook above is ready).
 * Lava, flowers/tall grass and other non-cube blocks.

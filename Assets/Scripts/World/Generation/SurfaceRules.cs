@@ -20,9 +20,10 @@ namespace World.Generation
         {
             TerrainConfig config = context.Config;
             BiomeDefinition biome = BiomeRegistry.Get(column.Biome);
+            double metres = config.FeatureScale;
 
             if (column.Height < config.SeaLevel)
-                return column.Biome == BiomeId.Ocean && column.Height < config.SeaLevel - 14
+                return column.Biome == BiomeId.Ocean && column.Height < config.SeaLevel - 14 * metres
                     ? BlockId.Gravel
                     : biome.UnderwaterBlock;
 
@@ -31,10 +32,10 @@ namespace World.Generation
 
             int slope = context.GetSlope(worldX, worldZ);
 
-            if (slope >= CliffSlope && column.Biome != BiomeId.Beach && column.Biome != BiomeId.Desert)
+            if (slope >= CliffSlope * metres * 0.5 + 1 && column.Biome != BiomeId.Beach && column.Biome != BiomeId.Desert)
             {
                 // Snow still sticks to cold cliffs now and then.
-                if (column.Temperature < -0.5f && slope < 5)
+                if (column.Temperature < -0.5f && slope < 5 * metres * 0.5 + 1)
                     return BlockId.Snow;
 
                 return Hash(context, worldX, worldZ, 11) < 0.15 ? BlockId.Gravel : BlockId.Stone;
@@ -43,7 +44,7 @@ namespace World.Generation
             if (column.Biome == BiomeId.Mountains)
             {
                 // Grassy patches on gentler mountain slopes, below the tree line.
-                if (slope <= 1 && column.Height < config.SeaLevel + 75 &&
+                if (slope <= 1 && column.Height < config.SeaLevel + 75 * metres &&
                     Hash(context, worldX, worldZ, 12) < 0.55)
                 {
                     return BlockId.Grass;
@@ -53,7 +54,7 @@ namespace World.Generation
             }
 
             // Sand along the water line.
-            if (column.Height <= config.SeaLevel + 1 &&
+            if (column.Height <= config.SeaLevel + (int)(1.5 * metres) &&
                 column.Biome != BiomeId.Swamp &&
                 column.Biome != BiomeId.Tundra &&
                 column.Temperature > -0.45f)
@@ -121,11 +122,13 @@ namespace World.Generation
                     break;
             }
 
-            // Slight per-column variation in layer depth.
-            int jitter = (int)(Hash(context, worldX, worldZ, 21) * 2);
-            fillerDepth += fillerDepth > 0 ? jitter : 0;
+            // Layer depths are in metres; convert to voxels, with slight
+            // per-column variation.
+            double metres = config.FeatureScale;
+            int jitter = (int)(Hash(context, worldX, worldZ, 21) * 2 * metres);
+            fillerDepth = fillerDepth > 0 ? (int)(fillerDepth * metres) + jitter : 0;
 
-            int deepDepth = biome.DeepFillerDepth;
+            int deepDepth = (int)(biome.DeepFillerDepth * metres);
             BlockId deep = biome.DeepFillerBlock;
 
             for (int y = 0; y <= height; y++)

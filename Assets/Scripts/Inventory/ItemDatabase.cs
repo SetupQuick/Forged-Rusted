@@ -14,6 +14,10 @@ namespace Items
         private static Dictionary<string, ItemData> _items;
         private static Dictionary<BlockId, ItemData> _blockItems;
 
+        // Network ids: index into the id-sorted item list, plus one (0 = empty).
+        private static List<ItemData> _byNetworkId;
+        private static Dictionary<string, ushort> _networkIds;
+
         public static IEnumerable<ItemData> All
         {
             get
@@ -35,6 +39,31 @@ namespace Items
             EnsureLoaded();
             _blockItems.TryGetValue(block, out ItemData item);
             return item;
+        }
+
+        /// <summary>
+        /// Compact id for network messages (0 = no item). Identical on every
+        /// machine running the same build, because it is the position in
+        /// the list of all item ids sorted alphabetically.
+        /// </summary>
+        public static ushort GetNetworkId(ItemData item)
+        {
+            EnsureLoaded();
+
+            if (item == null)
+                return 0;
+
+            return _networkIds.TryGetValue(item.Id, out ushort id) ? id : (ushort)0;
+        }
+
+        public static ItemData GetByNetworkId(ushort networkId)
+        {
+            EnsureLoaded();
+
+            if (networkId == 0 || networkId > _byNetworkId.Count)
+                return null;
+
+            return _byNetworkId[networkId - 1];
         }
 
         private static void EnsureLoaded()
@@ -68,6 +97,18 @@ namespace Items
                 _items[item.Id] = item;
                 _blockItems.Add(block, item);
             }
+
+            var ids = new List<string>(_items.Keys);
+            ids.Sort(System.StringComparer.Ordinal);
+
+            _byNetworkId = new List<ItemData>(ids.Count);
+            _networkIds = new Dictionary<string, ushort>(ids.Count);
+
+            foreach (string id in ids)
+            {
+                _byNetworkId.Add(_items[id]);
+                _networkIds[id] = (ushort)_byNetworkId.Count;
+            }
         }
 
         private static bool IsHoldable(BlockId block)
@@ -82,6 +123,8 @@ namespace Items
         {
             _items = null;
             _blockItems = null;
+            _byNetworkId = null;
+            _networkIds = null;
         }
     }
 }

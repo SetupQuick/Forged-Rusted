@@ -141,6 +141,20 @@ namespace Networking
         public WorldInfoMessage? ServerWorldInfo =>
             _serverWorldInfoMessage;
 
+        /// <summary>Client-side gameplay (actions, block changes, inventory). Null without a client.</summary>
+        public ClientGameplayModule ClientGameplay
+        {
+            get;
+            private set;
+        }
+
+        /// <summary>Server-side gameplay (authoritative inventories and edits). Null without a server.</summary>
+        public ServerGameplayModule ServerGameplay
+        {
+            get;
+            private set;
+        }
+
         private void Awake()
         {
             if (Current != null &&
@@ -321,6 +335,8 @@ namespace Networking
 
             _serverWorldInfo = null;
             _serverWorldInfoMessage = null;
+            ClientGameplay = null;
+            ServerGameplay = null;
             ReceivedWorldInfo = null;
 
             LocalPeerId = 0;
@@ -364,6 +380,37 @@ namespace Networking
                 $"Received world info: {info}.");
 
             WorldInfoReceived?.Invoke(info);
+        }
+
+        private void InstallServerGameplay(
+            ServerMessageRouter router)
+        {
+            // After world info, so a joining client gets the seed before
+            // any block edits.
+            ServerGameplay =
+                new ServerGameplayModule(
+                    _server,
+                    router,
+                    new WorldGameplayAccess(world));
+
+            _modules.Add(ServerGameplay);
+        }
+
+        private void InstallClientGameplay(
+            ClientMessageRouter router,
+            bool sharesWorldWithServer)
+        {
+            var access =
+                new WorldGameplayAccess(world);
+
+            ClientGameplay =
+                new ClientGameplayModule(
+                    _client,
+                    router,
+                    () => access,
+                    sharesWorldWithServer);
+
+            _modules.Add(ClientGameplay);
         }
 
         private void InstallServerWorldInfo()
@@ -411,6 +458,7 @@ namespace Networking
                 new ClientMessageRouter();
 
             InstallClientWorldInfo(router);
+            InstallClientGameplay(router, sharesWorldWithServer: false);
 
             var worldReplication =
                 new ClientWorldReplication(
@@ -451,6 +499,7 @@ namespace Networking
                 new ServerMessageRouter();
 
             InstallServerWorldInfo();
+            InstallServerGameplay(router);
 
             var playerMovement =
                 new ServerPlayerMovement(
@@ -509,6 +558,7 @@ namespace Networking
                 new ServerMessageRouter();
 
             InstallServerWorldInfo();
+            InstallServerGameplay(serverRouter);
 
             var serverPlayerMovement =
                 new ServerPlayerMovement(
@@ -554,6 +604,7 @@ namespace Networking
                 new ClientMessageRouter();
 
             InstallClientWorldInfo(clientRouter);
+            InstallClientGameplay(clientRouter, sharesWorldWithServer: true);
 
             var clientWorldReplication =
                 new ClientWorldReplication(

@@ -1,12 +1,16 @@
-// Transparent water for URP: vertex colour tinted, lit by the main
-// light, receives shadows, visible from above and below.
+// Transparent water for URP: vertex-colour tinted, small animated
+// ripples, sky reflections (reflection probe / skybox) with a Fresnel
+// falloff, sun glints, receives shadows, visible from above and below.
 Shader "ForgedRusted/Voxel Water"
 {
     Properties
     {
         _Tint ("Tint", Color) = (1, 1, 1, 1)
-        _Opacity ("Opacity", Range(0, 1)) = 0.72
-        _SpecularStrength ("Specular Strength", Range(0, 2)) = 0.6
+        _Opacity ("Opacity", Range(0, 1)) = 0.68
+        _SpecularStrength ("Specular Strength", Range(0, 4)) = 2
+        _ReflectionStrength ("Reflection Strength", Range(0, 1)) = 0.75
+        _RippleStrength ("Ripple Strength", Range(0, 0.5)) = 0.12
+        _RippleSpeed ("Ripple Speed", Range(0, 4)) = 1
     }
 
     SubShader
@@ -42,7 +46,13 @@ Shader "ForgedRusted/Voxel Water"
                 half4 _Tint;
                 half _Opacity;
                 half _SpecularStrength;
+                half _ReflectionStrength;
+                half _RippleStrength;
+                half _RippleSpeed;
             CBUFFER_END
+
+            half4 _VoxelSkyColor;
+            half4 _VoxelGroundColor;
 
             struct Attributes
             {
@@ -80,26 +90,55 @@ Shader "ForgedRusted/Voxel Water"
                 return output;
             }
 
+            // Cheap ripples: a few crossing sine waves give a moving slope.
+            half3 RippleNormal(float3 positionWS, half3 normal)
+            {
+                float t = _Time.y * _RippleSpeed;
+                float2 p = positionWS.xz;
+
+                float2 slope =
+                    float2(cos(p.x * 1.7 + t * 1.3), cos(p.y * 1.9 - t * 1.1)) * 0.5 +
+                    float2(cos((p.x + p.y) * 3.1 + t * 2.0), cos((p.x - p.y) * 2.7 - t * 1.7)) * 0.3;
+
+                half3 n = normalize(half3(-slope.x * _RippleStrength, 1, -slope.y * _RippleStrength));
+
+                // Only the top surface ripples.
+                return normal.y > 0.5 ? n : normal;
+            }
+
             half4 Frag(Varyings input, bool isFrontFace : SV_IsFrontFace) : SV_Target
             {
                 half3 normal = normalize(input.normalWS);
+                normal = RippleNormal(input.positionWS, normal);
                 normal = isFrontFace ? normal : -normal;
 
                 float4 shadowCoord = TransformWorldToShadowCoord(input.positionWS);
                 Light light = GetMainLight(shadowCoord);
-
                 half attenuation = light.shadowAttenuation * light.distanceAttenuation;
-                half diffuse = saturate(dot(normal, light.direction));
 
                 half3 viewDirection = normalize(GetWorldSpaceViewDir(input.positionWS));
-                half3 halfVector = normalize(light.direction + viewDirection);
-                half specular = pow(saturate(dot(normal, halfVector)), 64) * _SpecularStrength;
+                half nDotV = saturate(dot(normal, viewDirection));
+                half fresnel = 0.04 + 0.96 * pow(1.0 - nDotV, 5);
 
-                half3 lighting = SampleSH(normal) + light.color * diffuse * attenuation;
-                half3 color = input.color.rgb * lighting + light.color * specular * attenuation;
+                half3 ambient = _VoxelSkyColor.a > 0 ? _VoxelSkyColor.rgb : SampleSH(normal);
+                half diffuse = saturate(dot(normal, light.direction));
+                half3 body = input.color.rgb * (ambient * 0.8 + light.color * diffuse * attenuation * 0.6);
+
+                // Sky reflection from the reflection probe / skybox.
+                half3 reflected = reflect(-viewDirection, normal);
+                half3 reflection = GlossyEnvironmentReflection(reflected, 0.05h, 1.0h);
+
+                half3 color = lerp(body, reflection, saturate(fresnel + 0.15) * _ReflectionStrength);
+
+                // Sun glints.
+                half3 halfVector = normalize(light.direction + viewDirection);
+                half specular = pow(saturate(dot(normal, halfVector)), 256) * _SpecularStrength;
+                color += light.color * specular * attenuation;
+
                 color = MixFog(color, input.fogFactor);
 
-                return half4(color, _Opacity * _Tint.a);
+                half alpha = saturate(_Opacity + fresnel * 0.3) * _Tint.a;
+                return half4(color, alpha);
             }
             ENDHLSL
         }

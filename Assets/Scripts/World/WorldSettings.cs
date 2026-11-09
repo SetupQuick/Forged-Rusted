@@ -19,24 +19,31 @@ namespace World
         [SerializeField]
         private bool useRandomSeed;
 
-        [Header("Size")]
+        [Header("Voxels")]
+        [Tooltip("Size of one voxel in metres. Smaller voxels look more " +
+                 "detailed but cost more memory and CPU. A 2 m tall " +
+                 "player is 4 voxels tall at 0.5.")]
         [SerializeField]
-        [Min(1)]
-        private int chunkSize = 16;
+        [Range(0.25f, 1f)]
+        private float voxelSize = 0.5f;
 
-        [Tooltip("Maximum build height in blocks.")]
-        [SerializeField]
-        [Min(64)]
-        private int worldHeight = 256;
-
-        [Tooltip("Oceans, lakes and rivers fill up to this height.")]
+        [Tooltip("Chunk width in voxels.")]
         [SerializeField]
         [Min(8)]
-        private int seaLevel = 64;
+        private int chunkSize = 32;
 
-        [Header("Terrain shape")]
-        [Tooltip("Size of continents and oceans in blocks. " +
-                 "Larger means bigger landmasses.")]
+        [Tooltip("Maximum build height in voxels.")]
+        [SerializeField]
+        [Min(64)]
+        private int worldHeight = 320;
+
+        [Tooltip("Oceans, lakes and rivers fill up to this height (voxels).")]
+        [SerializeField]
+        [Min(8)]
+        private int seaLevel = 80;
+
+        [Header("Terrain shape (metres)")]
+        [Tooltip("Size of continents and oceans. Larger means bigger landmasses.")]
         [SerializeField]
         [Min(100)]
         private float continentScale = 1400f;
@@ -44,20 +51,20 @@ namespace World
         [Tooltip("Extra height of the tallest mountains above the land.")]
         [SerializeField]
         [Min(0)]
-        private float mountainHeight = 120f;
+        private float mountainHeight = 80f;
 
         [Tooltip("Height of rolling hills.")]
         [SerializeField]
         [Min(0)]
-        private float hillHeight = 20f;
+        private float hillHeight = 10f;
 
-        [Tooltip("Blocks above sea level where snow caps start.")]
+        [Tooltip("Height above sea level where snow caps start.")]
         [SerializeField]
-        [Min(10)]
-        private int snowLineAboveSea = 95;
+        [Min(5)]
+        private float snowLineAboveSea = 62f;
 
         [Header("Biomes")]
-        [Tooltip("Size of climate zones in blocks.")]
+        [Tooltip("Size of climate zones in metres.")]
         [SerializeField]
         [Min(100)]
         private float biomeScale = 1000f;
@@ -76,7 +83,7 @@ namespace World
         [SerializeField]
         private bool ores = true;
 
-        [Tooltip("Trees, cacti, boulders and (later) dungeons.")]
+        [Tooltip("Trees, grass, flowers, boulders and (later) dungeons.")]
         [SerializeField]
         private bool structures = true;
 
@@ -87,6 +94,8 @@ namespace World
         public int Seed => seed;
 
         public bool UseRandomSeed => useRandomSeed;
+
+        public float VoxelSize => voxelSize;
 
         public int ChunkSize => chunkSize;
 
@@ -101,6 +110,7 @@ namespace World
         {
             return new TerrainConfig(
                 worldSeed,
+                voxelSize,
                 chunkSize,
                 worldHeight,
                 seaLevel,

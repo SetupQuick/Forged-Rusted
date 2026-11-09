@@ -31,6 +31,7 @@ namespace World.Generation
         private readonly GradientNoise _tunnelA;
         private readonly GradientNoise _tunnelB;
         private readonly FractalNoise _entrances;
+        private readonly double _metres;
 
         private readonly double _cavernThreshold;
         private readonly double _tunnelWidth;
@@ -40,10 +41,11 @@ namespace World.Generation
             _config = config;
 
             long seed = config.Seed;
-            _cavern = new FractalNoise(SeedHash.Derive(seed, 201), 70, 2);
+            _metres = config.FeatureScale;
+            _cavern = new FractalNoise(SeedHash.Derive(seed, 201), 70 * _metres, 2);
             _tunnelA = new GradientNoise(SeedHash.Derive(seed, 202));
             _tunnelB = new GradientNoise(SeedHash.Derive(seed, 203));
-            _entrances = new FractalNoise(SeedHash.Derive(seed, 204), 140, 2);
+            _entrances = new FractalNoise(SeedHash.Derive(seed, 204), 140 * _metres, 2);
 
             double density = config.CaveDensity;
             _cavernThreshold = 0.42 - 0.10 * (density - 1.0);
@@ -68,7 +70,7 @@ namespace World.Generation
             // Caverns are squashed vertically so they are wider than tall.
             double cavern = _cavern.Sample(x, y * 2.0, z);
 
-            const double tunnelFrequency = 1.0 / 90.0;
+            double tunnelFrequency = 1.0 / (90.0 * _metres);
             double a = _tunnelA.Sample(x * tunnelFrequency, y * tunnelFrequency * 1.6, z * tunnelFrequency);
             double b = _tunnelB.Sample(x * tunnelFrequency, y * tunnelFrequency * 1.6, z * tunnelFrequency);
 
@@ -96,11 +98,12 @@ namespace World.Generation
             if (y < MinCaveY || y > surfaceHeight)
                 return false;
 
-            int depth = surfaceHeight - y;
+            // Depth below the surface in metres, so the rules hold at any voxel size.
+            double depth = (surfaceHeight - y) / _metres;
             int sea = _config.SeaLevel;
 
             // Never open caves under oceans, lakes and rivers.
-            if (surfaceHeight < sea + 3 && depth < 10)
+            if (surfaceHeight < sea + 3 * _metres && depth < 10)
                 return false;
 
             // Caverns: keep a solid roof near the surface, and make them
@@ -110,15 +113,16 @@ namespace World.Generation
             if (depth < 12)
                 threshold += (12 - depth) * 0.05;
 
-            if (y < 40)
-                threshold -= (40 - y) * 0.003;
+            double heightMetres = y / _metres;
+            if (heightMetres < 40)
+                threshold -= (40 - heightMetres) * 0.003;
 
             if (cavern > threshold)
                 return true;
 
             double width = _tunnelWidth;
 
-            if (y < 24)
+            if (heightMetres < 24)
                 width *= 1.25;
 
             if (tunnel >= width)

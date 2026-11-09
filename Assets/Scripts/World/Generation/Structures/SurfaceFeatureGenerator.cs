@@ -1,3 +1,4 @@
+using System;
 using World.Blocks;
 using World.Chunks;
 using World.Generation.Noise;
@@ -5,24 +6,23 @@ using World.Generation.Noise;
 namespace World.Generation.Structures
 {
     /// <summary>
-    /// Trees, bushes, cacti and boulders.
+    /// Trees, bushes, cacti and boulders, sized in metres so they keep
+    /// their proportions at any voxel size. With small voxels they get
+    /// lumpy round canopies built from several overlapping blobs.
     ///
-    /// The world is split into a grid of small cells. Each cell holds at
-    /// most one feature, at a position and of a kind chosen by hashing
-    /// the cell coordinates. Because that choice is a pure function of
-    /// the seed and cell, every chunk that overlaps a feature agrees on
-    /// it, and features crossing chunk borders line up.
+    /// The world is split into a grid of cells. Each cell holds at most
+    /// one feature, at a position and of a kind chosen by hashing the cell
+    /// coordinates. Because that choice is a pure function of the seed and
+    /// cell, every chunk that overlaps a feature agrees on it, and features
+    /// crossing chunk borders line up.
     /// </summary>
     public sealed class SurfaceFeatureGenerator : IStructureGenerator
     {
-        private const int CellSize = 5;
-        private const int Reach = 3;
-
         private enum Feature
         {
             None,
-            Oak,
-            TallOak,
+            RoundTree,
+            BigRoundTree,
             Pine,
             Acacia,
             Bush,
@@ -30,28 +30,48 @@ namespace World.Generation.Structures
             Boulder
         }
 
-        private readonly FractalNoise _forestDensity;
+        // 8 horizontal directions. A table instead of sin/cos, because
+        // trig functions may differ in the last bit between platforms and
+        // the Windows client must generate exactly what the Linux server does.
+        private static readonly double[] DirectionX = { 1, 0.7071, 0, -0.7071, -1, -0.7071, 0, 0.7071 };
+        private static readonly double[] DirectionZ = { 0, 0.7071, 1, 0.7071, 0, -0.7071, -1, -0.7071 };
 
-        public int MaxHorizontalReach => Reach;
+        private readonly FractalNoise _forestDensity;
+        private readonly double _metres;
+        private readonly int _cellSize;
+        private readonly int _reach;
+        private readonly double _densityPerCell;
+
+        public int MaxHorizontalReach => _reach;
 
         public SurfaceFeatureGenerator(TerrainConfig config)
         {
-            _forestDensity = new FractalNoise(SeedHash.Derive(config.Seed, 301), 180, 2);
+            _metres = config.FeatureScale;
+            _forestDensity = new FractalNoise(SeedHash.Derive(config.Seed, 301), 180 * _metres, 2);
+
+            // One candidate per 4 m cell; probabilities below are per
+            // 5 m x 5 m, so scale them to the cell area.
+            _cellSize = Math.Max(3, (int)Math.Round(4 * _metres));
+            double cellMetres = _cellSize / _metres;
+            _densityPerCell = cellMetres * cellMetres / 25.0;
+
+            // Largest canopy radius plus side blobs (see PlaceRoundTree).
+            _reach = (int)Math.Ceiling(4.5 * _metres);
         }
 
         public void Generate(ChunkGenerationContext context)
         {
             ChunkData chunk = context.Chunk;
 
-            int minX = context.MinWorldX - Reach;
-            int minZ = context.MinWorldZ - Reach;
-            int maxX = context.MinWorldX + chunk.SizeX - 1 + Reach;
-            int maxZ = context.MinWorldZ + chunk.SizeZ - 1 + Reach;
+            int minX = context.MinWorldX - _reach;
+            int minZ = context.MinWorldZ - _reach;
+            int maxX = context.MinWorldX + chunk.SizeX - 1 + _reach;
+            int maxZ = context.MinWorldZ + chunk.SizeZ - 1 + _reach;
 
-            int minCellX = CaveCarver.FloorDiv(minX, CellSize);
-            int minCellZ = CaveCarver.FloorDiv(minZ, CellSize);
-            int maxCellX = CaveCarver.FloorDiv(maxX, CellSize);
-            int maxCellZ = CaveCarver.FloorDiv(maxZ, CellSize);
+            int minCellX = CaveCarver.FloorDiv(minX, _cellSize);
+            int minCellZ = CaveCarver.FloorDiv(minZ, _cellSize);
+            int maxCellX = CaveCarver.FloorDiv(maxX, _cellSize);
+            int maxCellZ = CaveCarver.FloorDiv(maxZ, _cellSize);
 
             for (int cellZ = minCellZ; cellZ <= maxCellZ; cellZ++)
             for (int cellX = minCellX; cellX <= maxCellX; cellX++)
@@ -59,8 +79,8 @@ namespace World.Generation.Structures
                 ulong hash = SeedHash.Hash(context.Config.Seed, cellX, cellZ, 0x7EE5);
                 var random = new WorldRandom(hash);
 
-                int x = cellX * CellSize + random.Range(0, CellSize);
-                int z = cellZ * CellSize + random.Range(0, CellSize);
+                int x = cellX * _cellSize + random.Range(0, _cellSize);
+                int z = cellZ * _cellSize + random.Range(0, _cellSize);
 
                 if (x < minX || x > maxX || z < minZ || z > maxZ)
                     continue;
@@ -85,16 +105,16 @@ namespace World.Generation.Structures
             ColumnSample column = context.GetColumn(x, z);
 
             if (column.Height < config.SeaLevel + 1 ||
-                column.Height >= config.WorldHeight - 20)
+                column.Height >= config.WorldHeight - 16 * _metres)
             {
                 return Feature.None;
             }
 
-            if (context.GetSlope(x, z) > 1 || context.IsSurfaceCarved(x, z))
+            if (context.GetSlope(x, z) > Math.Max(1, (int)_metres) || context.IsSurfaceCarved(x, z))
                 return Feature.None;
 
             BlockId surface = context.GetSurfaceBlock(x, z);
-            double roll = random.NextDouble();
+            double roll = random.NextDouble() / _densityPerCell;
             double density = config.TreeDensity;
 
             // 0..1 patchiness so forests have clearings and groves.
@@ -117,16 +137,18 @@ namespace World.Generation.Structures
             switch (column.Biome)
             {
                 case BiomeId.Forest:
-                    if (roll < (0.25 + 0.6 * grove) * density)
-                        return random.Chance(0.2) ? Feature.TallOak : Feature.Oak;
-                    if (roll < (0.32 + 0.6 * grove) * density)
+                    if (roll < (0.22 + 0.5 * grove) * density)
+                        return random.Chance(0.25) ? Feature.BigRoundTree : Feature.RoundTree;
+                    if (roll < (0.30 + 0.5 * grove) * density)
                         return Feature.Bush;
+                    if (roll < (0.31 + 0.5 * grove) * density)
+                        return Feature.Boulder;
                     return Feature.None;
 
                 case BiomeId.Plains:
-                    if (roll < 0.035 * grove * density) return Feature.Oak;
-                    if (roll < 0.08 * density) return Feature.Bush;
-                    if (roll < 0.09 * density) return Feature.Boulder;
+                    if (roll < 0.04 * grove * density) return Feature.RoundTree;
+                    if (roll < 0.09 * density) return Feature.Bush;
+                    if (roll < 0.10 * density) return Feature.Boulder;
                     return Feature.None;
 
                 case BiomeId.Savanna:
@@ -135,8 +157,8 @@ namespace World.Generation.Structures
                     return Feature.None;
 
                 case BiomeId.Taiga:
-                    if (roll < (0.3 + 0.5 * grove) * density) return Feature.Pine;
-                    if (roll < (0.34 + 0.5 * grove) * density) return Feature.Boulder;
+                    if (roll < (0.28 + 0.45 * grove) * density) return Feature.Pine;
+                    if (roll < (0.32 + 0.45 * grove) * density) return Feature.Boulder;
                     return Feature.None;
 
                 case BiomeId.Tundra:
@@ -145,12 +167,12 @@ namespace World.Generation.Structures
                     return Feature.None;
 
                 case BiomeId.Swamp:
-                    if (roll < 0.18 * density) return Feature.Oak;
+                    if (roll < 0.16 * density) return Feature.RoundTree;
                     if (roll < 0.28 * density) return Feature.Bush;
                     return Feature.None;
 
                 case BiomeId.Mountains:
-                    if (column.Height < config.SeaLevel + 70 && roll < 0.12 * density)
+                    if (column.Height < config.SeaLevel + 70 * _metres && roll < 0.12 * density)
                         return Feature.Pine;
                     return Feature.None;
 
@@ -159,7 +181,7 @@ namespace World.Generation.Structures
             }
         }
 
-        private static void Place(
+        private void Place(
             ChunkGenerationContext context,
             Feature feature,
             int x,
@@ -169,16 +191,16 @@ namespace World.Generation.Structures
         {
             switch (feature)
             {
-                case Feature.Oak:
-                    PlaceRoundTree(context, x, groundY, z, random.Range(4, 6), 2, ref random);
+                case Feature.RoundTree:
+                    PlaceRoundTree(context, x, groundY, z, 1.0, ref random);
                     break;
 
-                case Feature.TallOak:
-                    PlaceRoundTree(context, x, groundY, z, random.Range(6, 9), 2, ref random);
+                case Feature.BigRoundTree:
+                    PlaceRoundTree(context, x, groundY, z, 1.25, ref random);
                     break;
 
                 case Feature.Pine:
-                    PlacePine(context, x, groundY, z, random.Range(6, 11), ref random);
+                    PlacePine(context, x, groundY, z, ref random);
                     break;
 
                 case Feature.Acacia:
@@ -186,7 +208,7 @@ namespace World.Generation.Structures
                     break;
 
                 case Feature.Bush:
-                    PlaceBush(context, x, groundY, z, ref random);
+                    PlaceBlob(context, x, groundY + 1, z, M(0.6 + random.NextDouble() * 0.5), 0.8, PickLeaves(context, x, z, ref random), 0x8053);
                     break;
 
                 case Feature.Cactus:
@@ -199,85 +221,128 @@ namespace World.Generation.Structures
             }
         }
 
-        private static void PlaceRoundTree(
+        private double M(double metres) => metres * _metres;
+
+        private BlockId PickLeaves(ChunkGenerationContext context, int x, int z, ref WorldRandom random)
+        {
+            BiomeId biome = context.GetColumn(x, z).Biome;
+
+            if (biome == BiomeId.Forest)
+            {
+                double roll = random.NextDouble();
+                if (roll < 0.18) return BlockId.AutumnLeaves;
+                if (roll < 0.28) return BlockId.RedLeaves;
+            }
+            else
+            {
+                random.NextDouble(); // keep the random sequence the same length
+            }
+
+            return BlockId.Leaves;
+        }
+
+        private void PlaceRoundTree(
             ChunkGenerationContext context,
             int x,
             int groundY,
             int z,
-            int trunkHeight,
-            int radius,
+            double size,
             ref WorldRandom random)
         {
+            BlockId leaves = PickLeaves(context, x, z, ref random);
             SetGroundUnderTrunk(context, x, groundY, z);
 
-            int top = groundY + trunkHeight;
+            // Short, sturdy trunks under big, low canopies.
+            int trunk = (int)M((2.2 + random.NextDouble() * 1.2) * size);
+            int top = groundY + trunk;
+            bool thick = size > 1.2 || random.Chance(0.35);
 
             for (int y = groundY + 1; y <= top; y++)
+            {
                 SetLog(context, x, y, z, BlockId.Log);
 
-            // Canopy: two wide layers, then two narrow ones.
-            for (int dy = -2; dy <= 1; dy++)
-            {
-                int r = dy <= -1 ? radius : radius - 1;
-                int y = top + dy;
-
-                for (int dx = -r; dx <= r; dx++)
-                for (int dz = -r; dz <= r; dz++)
+                if (thick)
                 {
-                    bool corner = (dx == -r || dx == r) && (dz == -r || dz == r);
-
-                    // Randomly trim corners so canopies are not perfect cubes.
-                    if (corner && (dy == 1 || (Hash(context, x + dx, y, z + dz) & 1) == 0))
-                        continue;
-
-                    SetLeaves(context, x + dx, y, z + dz, BlockId.Leaves);
+                    SetLog(context, x + 1, y, z, BlockId.Log);
+                    SetLog(context, x, y, z + 1, BlockId.Log);
+                    SetLog(context, x + 1, y, z + 1, BlockId.Log);
                 }
             }
 
-            SetLeaves(context, x, top + 2, z, BlockId.Leaves);
+            // Canopy: one main blob and a few side blobs give a lumpy,
+            // natural crown.
+            double radius = M(1.9 + random.NextDouble() * 0.7) * size;
+            PlaceBlob(context, x, top + (int)(radius * 0.25), z, radius, 0.8, leaves, 0x1EAF);
+
+            int sideBlobs = random.Range(3, 7);
+
+            for (int i = 0; i < sideBlobs; i++)
+            {
+                int direction = random.Range(0, 8);
+                double dirX = DirectionX[direction];
+                double dirZ = DirectionZ[direction];
+                double distance = radius * (0.4 + random.NextDouble() * 0.15);
+                int bx = x + (int)Math.Round(dirX * distance);
+                int bz = z + (int)Math.Round(dirZ * distance);
+                int by = top - (int)(radius * 0.4) + random.Range(0, (int)(radius * 0.6) + 1);
+                double sideRadius = radius * (0.55 + random.NextDouble() * 0.15);
+
+                PlaceBlob(context, bx, by, bz, sideRadius, 0.9, leaves, 0x51DE + i);
+
+                // A branch from the trunk towards the side blob.
+                int steps = (int)distance;
+                for (int s = 1; s <= steps; s++)
+                {
+                    int lx = x + (int)Math.Round(dirX * s * 0.8);
+                    int lz = z + (int)Math.Round(dirZ * s * 0.8);
+                    SetLog(context, lx, top - 1 + s / 3, lz, BlockId.Log);
+                }
+            }
         }
 
-        private static void PlacePine(
+        private void PlacePine(
             ChunkGenerationContext context,
             int x,
             int groundY,
             int z,
-            int height,
             ref WorldRandom random)
         {
             SetGroundUnderTrunk(context, x, groundY, z);
 
+            int height = (int)M(5.5 + random.NextDouble() * 4.5);
             int top = groundY + height;
 
-            for (int y = groundY + 1; y < top; y++)
+            // Trunk ends below the tip so it never pokes out of the leaves.
+            for (int y = groundY + 1; y < top - 2; y++)
                 SetLog(context, x, y, z, BlockId.PineLog);
 
-            // Cone of alternating rings, widest near the bottom.
-            int leafStart = groundY + 2 + random.Range(0, 2);
-            int radius = 0;
+            // Tiered cone: rings get wider towards the bottom, with a
+            // short gap between tiers.
+            int leafStart = groundY + (int)M(1.5 + random.NextDouble());
+            double maxRadius = M(1.8 + random.NextDouble() * 0.5);
+            int tier = Math.Max(2, (int)M(1.2));
 
             for (int y = top; y >= leafStart; y--)
             {
-                int r = (top - y) % 2 == 0 ? radius : radius - 1;
-                if (r < 0) r = 0;
+                double t = (top - y) / (double)Math.Max(1, top - leafStart);
+                int inTier = (top - y) % tier;
+                double r = maxRadius * t * (1.0 - 0.35 * inTier / tier) + 1.0;
 
-                for (int dx = -r; dx <= r; dx++)
-                for (int dz = -r; dz <= r; dz++)
+                int ri = (int)Math.Ceiling(r);
+                for (int dx = -ri; dx <= ri; dx++)
+                for (int dz = -ri; dz <= ri; dz++)
                 {
-                    if (r > 0 && dx * dx + dz * dz > r * r + 1)
-                        continue;
+                    double d = Math.Sqrt(dx * dx + dz * dz) + Jitter(context, x + dx, y, z + dz, 0.6);
 
-                    SetLeaves(context, x + dx, y, z + dz, BlockId.PineLeaves);
+                    if (d <= r)
+                        SetLeaves(context, x + dx, y, z + dz, BlockId.PineLeaves);
                 }
-
-                if ((top - y) % 2 == 1 && radius < Reach)
-                    radius++;
             }
 
             SetLeaves(context, x, top + 1, z, BlockId.PineLeaves);
         }
 
-        private static void PlaceAcacia(
+        private void PlaceAcacia(
             ChunkGenerationContext context,
             int x,
             int groundY,
@@ -286,7 +351,7 @@ namespace World.Generation.Structures
         {
             SetGroundUnderTrunk(context, x, groundY, z);
 
-            int height = random.Range(4, 7);
+            int height = (int)M(3 + random.NextDouble() * 1.5);
             int leanX = random.Range(-1, 2);
             int leanZ = random.Range(-1, 2);
 
@@ -295,7 +360,7 @@ namespace World.Generation.Structures
 
             for (int i = 1; i <= height; i++)
             {
-                if (i == height - 1)
+                if (i == height * 2 / 3)
                 {
                     cx += leanX;
                     cz += leanZ;
@@ -305,89 +370,108 @@ namespace World.Generation.Structures
             }
 
             int top = groundY + height;
+            double radius = M(2.2 + random.NextDouble() * 0.6);
+            int ri = (int)Math.Ceiling(radius);
+            int thickness = Math.Max(1, (int)M(0.6));
 
-            // Flat, wide canopy. Radius 2 plus the lean of 1 stays
-            // within MaxHorizontalReach.
-            for (int dx = -2; dx <= 2; dx++)
-            for (int dz = -2; dz <= 2; dz++)
+            for (int dx = -ri; dx <= ri; dx++)
+            for (int dz = -ri; dz <= ri; dz++)
+            for (int dy = 0; dy <= thickness; dy++)
             {
-                int d = (dx < 0 ? -dx : dx) + (dz < 0 ? -dz : dz);
+                double d = Math.Sqrt(dx * dx + dz * dz) + Jitter(context, cx + dx, top + dy, cz + dz, 0.8);
+                double layerRadius = dy == thickness ? radius * 0.6 : radius;
 
-                if (d <= 3)
-                    SetLeaves(context, cx + dx, top + 1, cz + dz, BlockId.Leaves);
-
-                if (d <= 1)
-                    SetLeaves(context, cx + dx, top + 2, cz + dz, BlockId.Leaves);
+                if (d <= layerRadius)
+                    SetLeaves(context, cx + dx, top + 1 + dy, cz + dz, BlockId.Leaves);
             }
         }
 
-        private static void PlaceBush(
+        private void PlaceCactus(
             ChunkGenerationContext context,
             int x,
             int groundY,
             int z,
             ref WorldRandom random)
         {
-            SetLog(context, x, groundY + 1, z, BlockId.Log);
-
-            for (int dx = -1; dx <= 1; dx++)
-            for (int dz = -1; dz <= 1; dz++)
-            {
-                if (dx != 0 && dz != 0 && random.Chance(0.5))
-                    continue;
-
-                SetLeaves(context, x + dx, groundY + 1, z + dz, BlockId.Leaves);
-            }
-
-            SetLeaves(context, x, groundY + 2, z, BlockId.Leaves);
-        }
-
-        private static void PlaceCactus(
-            ChunkGenerationContext context,
-            int x,
-            int groundY,
-            int z,
-            ref WorldRandom random)
-        {
-            int height = random.Range(2, 5);
+            int height = (int)M(1.5 + random.NextDouble() * 2);
 
             for (int y = groundY + 1; y <= groundY + height; y++)
                 SetLog(context, x, y, z, BlockId.Cactus);
 
-            // Occasional arm.
-            if (height >= 3 && random.Chance(0.5))
+            if (height >= M(2) && random.Chance(0.6))
             {
                 int side = random.Range(0, 4);
                 int ax = side == 0 ? 1 : side == 1 ? -1 : 0;
                 int az = side == 2 ? 1 : side == 3 ? -1 : 0;
-                int armY = groundY + 2;
+                int armY = groundY + height / 2;
+                int armLength = Math.Max(1, (int)M(0.5));
 
-                SetLog(context, x + ax, armY, z + az, BlockId.Cactus);
-                SetLog(context, x + ax, armY + 1, z + az, BlockId.Cactus);
+                for (int i = 1; i <= armLength; i++)
+                    SetLog(context, x + ax * i, armY, z + az * i, BlockId.Cactus);
+
+                for (int i = 1; i <= (int)M(0.8); i++)
+                    SetLog(context, x + ax * armLength, armY + i, z + az * armLength, BlockId.Cactus);
             }
         }
 
-        private static void PlaceBoulder(
+        private void PlaceBoulder(
             ChunkGenerationContext context,
             int x,
             int groundY,
             int z,
             ref WorldRandom random)
         {
-            int radius = random.Range(1, 3);
-            BlockId block = random.Chance(0.25) ? BlockId.MossyStone : BlockId.Stone;
+            double radius = M(0.7 + random.NextDouble() * 0.7);
+            BlockId block = random.Chance(0.3) ? BlockId.MossyStone : BlockId.Stone;
+            int ri = (int)Math.Ceiling(radius);
 
-            for (int dx = -radius; dx <= radius; dx++)
-            for (int dy = -1; dy <= radius; dy++)
-            for (int dz = -radius; dz <= radius; dz++)
+            for (int dx = -ri; dx <= ri; dx++)
+            for (int dy = -ri; dy <= ri; dy++)
+            for (int dz = -ri; dz <= ri; dz++)
             {
-                int distance = dx * dx + dy * dy * 2 + dz * dz;
+                double d = Math.Sqrt(dx * dx + dy * dy * 1.8 + dz * dz) + Jitter(context, x + dx, groundY + dy, z + dz, 0.7);
 
-                if (distance > radius * radius + 1)
+                if (d > radius)
                     continue;
 
-                PlaceIfReplaceable(context, x + dx, groundY + dy, z + dz, block, replaceGround: dy <= 0);
+                // Moss on top.
+                BlockId b = dy >= ri - 1 && block == BlockId.Stone && (Hash(context, x + dx, groundY + dy, z + dz, 3) & 3) == 0
+                    ? BlockId.MossyStone
+                    : block;
+
+                PlaceIfReplaceable(context, x + dx, groundY + dy, z + dz, b, replaceGround: dy <= 0);
             }
+        }
+
+        /// <summary>A roughly spherical blob of leaves with a noisy edge.</summary>
+        private void PlaceBlob(
+            ChunkGenerationContext context,
+            int cx,
+            int cy,
+            int cz,
+            double radius,
+            double verticalSquash,
+            BlockId leaves,
+            int salt)
+        {
+            int ri = (int)Math.Ceiling(radius);
+
+            for (int dy = -ri; dy <= ri; dy++)
+            for (int dz = -ri; dz <= ri; dz++)
+            for (int dx = -ri; dx <= ri; dx++)
+            {
+                double ny = dy / verticalSquash;
+                double d = Math.Sqrt(dx * dx + ny * ny + dz * dz);
+                d += Jitter(context, cx + dx, cy + dy, cz + dz, 0.9, salt);
+
+                if (d <= radius)
+                    SetLeaves(context, cx + dx, cy + dy, cz + dz, leaves);
+            }
+        }
+
+        private static double Jitter(ChunkGenerationContext context, int x, int y, int z, double amount, int salt = 0x1EAF)
+        {
+            return (SeedHash.ToUnit(Hash(context, x, y, z, salt)) - 0.5) * amount;
         }
 
         private static void SetGroundUnderTrunk(ChunkGenerationContext context, int x, int groundY, int z)
@@ -430,12 +514,18 @@ namespace World.Generation.Structures
 
             bool replaceable =
                 existing == BlockId.Air ||
-                (replaceLeaves && (existing == BlockId.Leaves || existing == BlockId.PineLeaves)) ||
+                (replaceLeaves && IsLeaves(existing)) ||
                 (replaceGround && (existing == BlockId.Grass || existing == BlockId.Dirt ||
                                    existing == BlockId.Snow || existing == BlockId.Stone));
 
             if (replaceable)
                 chunk.SetBlockRaw(lx, y, lz, block);
+        }
+
+        private static bool IsLeaves(BlockId block)
+        {
+            return block == BlockId.Leaves || block == BlockId.PineLeaves ||
+                   block == BlockId.AutumnLeaves || block == BlockId.RedLeaves;
         }
 
         private static bool ToLocal(ChunkGenerationContext context, int x, int z, out int lx, out int lz)
@@ -446,9 +536,9 @@ namespace World.Generation.Structures
             return lx >= 0 && lz >= 0 && lx < context.Chunk.SizeX && lz < context.Chunk.SizeZ;
         }
 
-        private static ulong Hash(ChunkGenerationContext context, int x, int y, int z)
+        private static ulong Hash(ChunkGenerationContext context, int x, int y, int z, int salt)
         {
-            return SeedHash.Hash(context.Config.Seed, x, y, z, 0x1EAF);
+            return SeedHash.Hash(context.Config.Seed, x, y, z, salt);
         }
     }
 }

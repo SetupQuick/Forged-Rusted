@@ -1,8 +1,11 @@
 // Opaque voxel terrain for URP.
-// Colour comes from mesh vertex colours (block colour * biome tint *
-// baked ambient occlusion), lit by the main light with shadows,
-// ambient light probes and fog. No textures, so it stays cheap to
-// render - suited to the voxel / low-poly look.
+// Vertex colour RGB = albedo (block colour * biome tint * per-voxel
+// variation), vertex alpha = baked ambient occlusion.
+// Lighting: warm main light with soft shadows plus a sky/ground
+// hemisphere light that the AO darkens - a cheap stand-in for global
+// illumination. The hemisphere colours are set globally by
+// VoxelAtmosphere (falls back to Unity's ambient light probe).
+// No textures, so it stays cheap to render.
 Shader "ForgedRusted/Voxel Lit"
 {
     Properties
@@ -27,6 +30,11 @@ Shader "ForgedRusted/Voxel Lit"
             half4 _Tint;
             half _AmbientStrength;
         CBUFFER_END
+
+        // Set by VoxelAtmosphere (global, not per material).
+        half4 _VoxelSkyColor;
+        half4 _VoxelGroundColor;
+        half _VoxelAoDirectStrength;
         ENDHLSL
 
         Pass
@@ -75,10 +83,11 @@ Shader "ForgedRusted/Voxel Lit"
 
                 half4 color = input.color;
                 #if !defined(UNITY_COLORSPACE_GAMMA)
-                    // Vertex colours are authored in sRGB.
+                    // Albedo is authored in sRGB; alpha (AO) is linear.
                     color.rgb = SRGBToLinear(color.rgb);
                 #endif
-                output.color = color * _Tint;
+                color.rgb *= _Tint.rgb;
+                output.color = color;
 
                 output.fogFactor = ComputeFogFactor(position.positionCS.z);
                 return output;
@@ -93,9 +102,20 @@ Shader "ForgedRusted/Voxel Lit"
 
                 half diffuse = saturate(dot(normal, light.direction));
                 half attenuation = light.shadowAttenuation * light.distanceAttenuation;
+                half ao = input.color.a;
 
-                half3 ambient = SampleSH(normal) * _AmbientStrength;
-                half3 lighting = ambient + light.color * diffuse * attenuation;
+                // Sky light from above, warm bounce light from below.
+                half3 ambient;
+                if (_VoxelSkyColor.a > 0)
+                    ambient = lerp(_VoxelGroundColor.rgb, _VoxelSkyColor.rgb, normal.y * 0.5 + 0.5);
+                else
+                    ambient = SampleSH(normal);
+
+                ambient *= _AmbientStrength * ao;
+
+                // AO affects direct light only a little (contact shadow).
+                half directAo = lerp(1.0, ao, _VoxelAoDirectStrength > 0 ? _VoxelAoDirectStrength : 0.4);
+                half3 lighting = ambient + light.color * diffuse * attenuation * directAo;
 
                 half3 color = input.color.rgb * lighting;
                 color = MixFog(color, input.fogFactor);

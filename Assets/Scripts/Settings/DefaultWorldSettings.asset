@@ -14,13 +14,14 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::World.WorldSettings
   seed: 12345
   useRandomSeed: 0
-  chunkSize: 16
-  worldHeight: 256
-  seaLevel: 64
+  voxelSize: 0.5
+  chunkSize: 32
+  worldHeight: 320
+  seaLevel: 80
   continentScale: 1400
-  mountainHeight: 120
-  hillHeight: 20
-  snowLineAboveSea: 95
+  mountainHeight: 80
+  hillHeight: 10
+  snowLineAboveSea: 62
   biomeScale: 1000
   rivers: 1
   caves: 1

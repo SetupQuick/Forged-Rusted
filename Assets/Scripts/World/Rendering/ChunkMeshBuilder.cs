@@ -85,13 +85,18 @@ namespace World.Rendering
         public ChunkCoord Coord;
         public ChunkMeshData Solid;
         public ChunkMeshData Liquid;
+
+        /// <summary>Grass tufts and flowers: rendered, no collider.</summary>
+        public ChunkMeshData Detail;
         public long SourceVersion;
     }
 
     /// <summary>
-    /// Turns block data into a mesh: one quad per visible block face,
-    /// coloured per block and biome, with baked per-vertex ambient
-    /// occlusion so corners and crevices read well without textures.
+    /// Turns block data into a mesh: one quad per visible voxel face,
+    /// coloured per block and biome with per-voxel variation. Baked
+    /// ambient occlusion goes into the vertex alpha so the shader can
+    /// apply it mostly to sky light (a soft, global-illumination-like
+    /// look). Positions are scaled by the voxel size.
     ///
     /// Pure function of the input chunks. Safe on worker threads.
     /// </summary>
@@ -100,7 +105,7 @@ namespace World.Rendering
         private const float WaterSurfaceDrop = 0.12f;
 
         // AO brightness by number of occluders (0..3).
-        private static readonly float[] AoCurve = { 1.0f, 0.84f, 0.71f, 0.58f };
+        private static readonly float[] AoCurve = { 1.0f, 0.78f, 0.6f, 0.45f };
 
         private enum Face
         {
@@ -133,7 +138,7 @@ namespace World.Rendering
             new[] { new Vector3Int(1, 0, 0), new Vector3Int(0, 0, 0), new Vector3Int(0, 1, 0), new Vector3Int(1, 1, 0) }
         };
 
-        public static ChunkMeshResult Build(ChunkNeighborhood neighborhood, bool buildLiquid, long seed)
+        public static ChunkMeshResult Build(ChunkNeighborhood neighborhood, bool buildLiquid, long seed, float voxelSize = 1f)
         {
             ChunkData chunk = neighborhood.Center;
 
@@ -142,6 +147,7 @@ namespace World.Rendering
                 Coord = chunk.Coord,
                 Solid = new ChunkMeshData(),
                 Liquid = buildLiquid ? new ChunkMeshData() : null,
+                Detail = buildLiquid ? new ChunkMeshData() : null,
                 SourceVersion = neighborhood.CombinedVersion
             };
 
@@ -168,6 +174,15 @@ namespace World.Rendering
 
                 BlockDefinition definition = BlockRegistry.Get(block);
                 BiomeDefinition biome = BiomeRegistry.Get((BiomeId)chunk.GetBiome(x, z));
+
+                if (definition.Shape == BlockShape.Tuft || definition.Shape == BlockShape.Flower)
+                {
+                    // Decorations only matter visually; skip them on servers.
+                    if (result.Detail != null)
+                        AddDecoration(result.Detail, definition, biome, x, y, z, SeedHash.Hash(seed, originX + x, y, originZ + z, 0xDEC0));
+
+                    continue;
+                }
 
                 // Per-block brightness wobble plus a slight colour shift
                 // gives the untextured voxels a hand-painted look.
@@ -197,7 +212,131 @@ namespace World.Rendering
                 }
             }
 
+            if (voxelSize != 1f)
+            {
+                Scale(result.Solid, voxelSize);
+                Scale(result.Liquid, voxelSize);
+                Scale(result.Detail, voxelSize);
+            }
+
             return result;
+        }
+
+        private static void Scale(ChunkMeshData mesh, float scale)
+        {
+            if (mesh == null)
+                return;
+
+            List<Vector3> vertices = mesh.Vertices;
+
+            for (int i = 0; i < vertices.Count; i++)
+            {
+                Vector3 v = vertices[i];
+                vertices[i] = new Vector3(v.x * scale, v.y * scale, v.z * scale);
+            }
+        }
+
+        /// <summary>
+        /// Grass tuft: a few thin columns of different heights.
+        /// Flower: a stem with a coloured head. All sub-voxel boxes, with
+        /// darker bottoms for a little contact shadow.
+        /// </summary>
+        private static void AddDecoration(
+            ChunkMeshData mesh,
+            BlockDefinition definition,
+            BiomeDefinition biome,
+            int x,
+            int y,
+            int z,
+            ulong hash)
+        {
+            Color32 baseColor = FaceColor(definition, biome, Face.Up, new Vector3(1f, 1f, 1f));
+
+            if (definition.Shape == BlockShape.Tuft)
+            {
+                int blades = 3 + (int)(hash & 1);
+
+                for (int i = 0; i < blades; i++)
+                {
+                    ulong h = SeedHash.Mix(hash + (ulong)i * 0x9E37UL);
+                    float px = 0.15f + Unit(h, 0) * 0.55f;
+                    float pz = 0.15f + Unit(h, 8) * 0.55f;
+                    float w = 0.16f + Unit(h, 16) * 0.1f;
+                    float height = 0.25f + Unit(h, 24) * 0.45f;
+                    float shade = 0.7f + Unit(h, 32) * 0.45f;
+
+                    // Some blades lean yellow, some darker, for a natural mix.
+                    Color32 blade = Tint(baseColor, shade);
+                    if (Unit(h, 40) > 0.7f)
+                        blade = new Color32(ClampByte(blade.r * 1.25f), blade.g, (byte)(blade.b * 0.8f), 255);
+
+                    AddBox(mesh, x + px, y, z + pz, x + px + w, y + height, z + pz + w, blade);
+                }
+
+                return;
+            }
+
+            BiomeDefinition stemBiome = biome;
+            BlockColor stem = stemBiome.GrassTint;
+            float stemHeight = 0.45f + Unit(hash, 0) * 0.3f;
+            float cx = 0.35f + Unit(hash, 8) * 0.3f;
+            float cz = 0.35f + Unit(hash, 16) * 0.3f;
+
+            AddBox(mesh, x + cx - 0.05f, y, z + cz - 0.05f, x + cx + 0.05f, y + stemHeight, z + cz + 0.05f,
+                new Color32((byte)(stem.R * 0.75f), (byte)(stem.G * 0.75f), (byte)(stem.B * 0.75f), 255));
+
+            const float head = 0.15f;
+            AddBox(mesh, x + cx - head, y + stemHeight, z + cz - head, x + cx + head, y + stemHeight + head * 1.4f, z + cz + head, baseColor);
+        }
+
+        private static float Unit(ulong hash, int shift)
+        {
+            return ((hash >> shift) & 0xFF) / 255f;
+        }
+
+        private static Color32 Tint(Color32 color, float factor)
+        {
+            return new Color32(ClampByte(color.r * factor), ClampByte(color.g * factor), ClampByte(color.b * factor), 255);
+        }
+
+        private static void AddBox(
+            ChunkMeshData mesh,
+            float x0, float y0, float z0,
+            float x1, float y1, float z1,
+            Color32 color)
+        {
+            for (int f = 0; f < 6; f++)
+            {
+                if ((Face)f == Face.Down)
+                    continue;
+
+                Vector3Int normal = FaceNormals[f];
+                Vector3Int[] corners = FaceCorners[f];
+                int start = mesh.Vertices.Count;
+
+                for (int i = 0; i < 4; i++)
+                {
+                    Vector3Int c = corners[i];
+
+                    mesh.Vertices.Add(new Vector3(
+                        c.x == 0 ? x0 : x1,
+                        c.y == 0 ? y0 : y1,
+                        c.z == 0 ? z0 : z1));
+
+                    mesh.Normals.Add(normal);
+
+                    // Alpha = ambient occlusion: darker at the ground.
+                    byte ao = c.y == 0 ? (byte)140 : (byte)255;
+                    mesh.Colors.Add(new Color32(color.r, color.g, color.b, ao));
+                }
+
+                mesh.Triangles.Add(start + 0);
+                mesh.Triangles.Add(start + 1);
+                mesh.Triangles.Add(start + 2);
+                mesh.Triangles.Add(start + 0);
+                mesh.Triangles.Add(start + 2);
+                mesh.Triangles.Add(start + 3);
+            }
         }
 
         private static Color32 FaceColor(BlockDefinition definition, BiomeDefinition biome, Face face, Vector3 variation)
@@ -264,11 +403,9 @@ namespace World.Rendering
 
                 mesh.Vertices.Add(new Vector3(x + c.x, y + c.y, z + c.z));
                 mesh.Normals.Add(normal);
-                mesh.Colors.Add(new Color32(
-                    (byte)(color.r * shade),
-                    (byte)(color.g * shade),
-                    (byte)(color.b * shade),
-                    255));
+
+                // RGB = albedo, A = ambient occlusion (applied in the shader).
+                mesh.Colors.Add(new Color32(color.r, color.g, color.b, (byte)(255 * shade)));
             }
 
             // Flip the quad's diagonal so AO gradients do not look skewed.

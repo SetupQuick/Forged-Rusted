@@ -413,28 +413,18 @@ namespace Networking
             IsHeadUnderwater = eyes;
         }
 
+        // Positions are world units (metres); the world converts to voxels.
         private static bool IsWater(WorldManager world, float x, float y, float z)
         {
-            world.TryGetLoadedBlock(
-                Mathf.FloorToInt(x),
-                Mathf.FloorToInt(y),
-                Mathf.FloorToInt(z),
-                out BlockId block);
-
+            world.TryGetLoadedBlockAt(new Vector3(x, y, z), out BlockId block);
             return BlockRegistry.IsLiquid(block);
         }
 
         private static bool IsSolid(WorldManager world, float x, float y, float z)
         {
             // Unloaded chunks count as solid: never move into the unknown.
-            if (!world.TryGetLoadedBlock(
-                    Mathf.FloorToInt(x),
-                    Mathf.FloorToInt(y),
-                    Mathf.FloorToInt(z),
-                    out BlockId block))
-            {
+            if (!world.TryGetLoadedBlockAt(new Vector3(x, y, z), out BlockId block))
                 return true;
-            }
 
             return BlockRegistry.IsSolid(block);
         }
@@ -488,12 +478,12 @@ namespace Networking
             float from = BottomY + _controller.height;
             float to = BottomY + targetHeight;
 
-            int minX = Mathf.FloorToInt(position.x - radius);
-            int maxX = Mathf.FloorToInt(position.x + radius);
-            int minZ = Mathf.FloorToInt(position.z - radius);
-            int maxZ = Mathf.FloorToInt(position.z + radius);
-            int minY = Mathf.FloorToInt(from - epsilon);
-            int maxY = Mathf.FloorToInt(to - epsilon);
+            Vector3Int min = world.WorldToVoxel(new Vector3(position.x - radius, from - epsilon, position.z - radius));
+            Vector3Int max = world.WorldToVoxel(new Vector3(position.x + radius, to - epsilon, position.z + radius));
+
+            int minX = min.x, maxX = max.x;
+            int minY = min.y, maxY = max.y;
+            int minZ = min.z, maxZ = max.z;
 
             for (int y = minY; y <= maxY; y++)
             for (int z = minZ; z <= maxZ; z++)

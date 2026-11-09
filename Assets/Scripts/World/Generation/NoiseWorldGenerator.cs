@@ -53,6 +53,9 @@ namespace World.Generation
 
                 if (extraStructures != null)
                     structures.AddRange(extraStructures);
+
+                // Last: grass and flowers only go where nothing else is.
+                structures.Add(new GroundCoverGenerator(config));
             }
 
             _structures = structures.ToArray();

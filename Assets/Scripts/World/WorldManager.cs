@@ -49,6 +49,11 @@ namespace World
         [SerializeField]
         private Material waterMaterial;
 
+        [Tooltip("Add the default voxel lighting and post-processing " +
+                 "(VoxelAtmosphere) on machines that render.")]
+        [SerializeField]
+        private bool createAtmosphere = true;
+
         [Header("Performance")]
         [Tooltip("Finished chunk meshes uploaded per frame. " +
                  "Higher loads faster but can cause hitches.")]
@@ -78,6 +83,13 @@ namespace World
 
         private readonly HashSet<ChunkCoord> _dirty =
             new HashSet<ChunkCoord>();
+
+        // Player-made changes per chunk (key = local block index). They
+        // are applied whenever the chunk is generated, so edits survive
+        // unloading and arrive correctly for chunks a client has not
+        // loaded yet. This is also what world saving will write out.
+        private readonly Dictionary<ChunkCoord, Dictionary<int, BlockId>> _edits =
+            new Dictionary<ChunkCoord, Dictionary<int, BlockId>>();
 
         private readonly ConcurrentQueue<JobResult> _completed =
             new ConcurrentQueue<JobResult>();
@@ -123,6 +135,28 @@ namespace World
 
         public int PendingJobCount =>
             _runningJobs;
+
+        /// <summary>Metres per voxel.</summary>
+        public float VoxelSize =>
+            _generator?.Config.VoxelSize ?? settings.VoxelSize;
+
+        /// <summary>Number of player-made block changes the world remembers.</summary>
+        public int EditCount
+        {
+            get
+            {
+                int count = 0;
+                foreach (Dictionary<int, BlockId> chunkEdits in _edits.Values)
+                    count += chunkEdits.Count;
+                return count;
+            }
+        }
+
+        /// <summary>
+        /// Raised on the main thread after a block changed through
+        /// <see cref="SetBlock"/> (voxel position, new block).
+        /// </summary>
+        public event Action<Vector3Int, BlockId> BlockChanged;
 
         /// <summary>Raised whenever a world (re)initialises with a seed.</summary>
         public event Action<WorldManager> WorldReady;
@@ -256,6 +290,13 @@ namespace World
             TerrainConfig config = settings.CreateConfig(seed);
             _generator = new NoiseWorldGenerator(config);
 
+            if (_renderingEnabled &&
+                createAtmosphere &&
+                FindFirstObjectByType<VoxelAtmosphere>() == null)
+            {
+                gameObject.AddComponent<VoxelAtmosphere>();
+            }
+
             Debug.Log(
                 $"World initialised: seed {seed}, " +
                 $"height {config.WorldHeight}, sea level {config.SeaLevel}.");
@@ -330,6 +371,7 @@ namespace World
 
             _views.Clear();
             _chunks.Clear();
+            _edits.Clear();
             _generating.Clear();
             _meshing.Clear();
             _dirty.Clear();
@@ -404,9 +446,9 @@ namespace World
                 GetOrCreateChunk(new ChunkCoord(coord.X + dx, coord.Z + dz));
 
             ChunkNeighborhood neighbourhood = CollectNeighbourhood(coord);
-            ChunkMeshResult result = ChunkMeshBuilder.Build(neighbourhood, _renderingEnabled, Seed);
+            ChunkMeshResult result = ChunkMeshBuilder.Build(neighbourhood, _renderingEnabled, Seed, VoxelSize);
 
-            ApplyMesh(result);
+            ApplyMesh(result, colliderImmediately: true);
         }
 
         /// <summary>
@@ -415,9 +457,7 @@ namespace World
         /// </summary>
         public void EnsureAreaReadyNow(Vector3 position, int radiusInChunks = 1)
         {
-            ChunkCoord center = WorldToChunkCoord(
-                Mathf.FloorToInt(position.x),
-                Mathf.FloorToInt(position.z));
+            ChunkCoord center = WorldPositionToChunk(position);
 
             for (int dz = -radiusInChunks; dz <= radiusInChunks; dz++)
             for (int dx = -radiusInChunks; dx <= radiusInChunks; dx++)
@@ -450,18 +490,23 @@ namespace World
         /// <summary>
         /// Finds a dry, flat spot for a player near the preferred position
         /// (never in an ocean or river) and makes sure the terrain around
-        /// it exists. Returns the position just above the ground.
+        /// it exists. Positions are in world units (metres). Returns the
+        /// position just above the ground.
         /// </summary>
         public Vector3 FindSpawnPosition(Vector3 preferred, int searchRadius = 1024)
         {
             if (!EnsureReady())
                 return preferred;
 
-            int originX = Mathf.FloorToInt(preferred.x);
-            int originZ = Mathf.FloorToInt(preferred.z);
+            float voxel = VoxelSize;
+            int originX = Mathf.FloorToInt(preferred.x / voxel);
+            int originZ = Mathf.FloorToInt(preferred.z / voxel);
             int sea = _generator.Config.SeaLevel;
+            int maxAboveSea = Mathf.RoundToInt(30f / voxel);
 
-            const int step = 8;
+            // Search on a 4 m grid, up to searchRadius metres away.
+            int step = Mathf.Max(1, Mathf.RoundToInt(4f / voxel));
+            searchRadius = Mathf.RoundToInt(searchRadius / voxel);
 
             int bestX = originX;
             int bestZ = originZ;
@@ -485,7 +530,7 @@ namespace World
                         column.Biome == BiomeId.Ocean ||
                         column.Biome == BiomeId.FrozenOcean ||
                         column.IsRiver ||
-                        column.Height > sea + 60)
+                        column.Height > sea + maxAboveSea)
                     {
                         continue;
                     }
@@ -497,7 +542,10 @@ namespace World
             }
 
             int ground = GetGroundHeight(bestX, bestZ);
-            var position = new Vector3(bestX + 0.5f, ground + 1, bestZ + 0.5f);
+            var position = new Vector3(
+                (bestX + 0.5f) * voxel,
+                (ground + 1) * voxel,
+                (bestZ + 0.5f) * voxel);
 
             EnsureAreaReadyNow(position);
 
@@ -582,9 +630,13 @@ namespace World
         }
 
         /// <summary>
-        /// Changes a block and schedules the affected chunk meshes for
-        /// rebuilding. Server-authoritative block editing should call this
-        /// on the server and replicate the change to clients.
+        /// Changes a block (voxel coordinates). The change is remembered
+        /// even if the chunk is not loaded (it is applied when it loads),
+        /// affected chunk meshes are rebuilt, and <see cref="BlockChanged"/>
+        /// is raised. Never generates chunks.
+        ///
+        /// In multiplayer, gameplay goes through the server, which
+        /// validates edits and replicates them (ServerGameplayModule).
         /// </summary>
         public void SetBlock(
             int worldX,
@@ -600,33 +652,122 @@ namespace World
             }
 
             ChunkCoord coord = WorldToChunkCoord(worldX, worldZ);
-            ChunkData chunk = GetOrCreateChunk(coord);
-
             WorldToLocalPosition(worldX, worldZ, coord, out int localX, out int localZ);
 
-            if (chunk.GetBlock(localX, worldY, localZ) == block)
+            bool loaded = _chunks.TryGetValue(coord, out ChunkData chunk);
+
+            if (loaded && chunk.GetBlock(localX, worldY, localZ) == block)
                 return;
 
-            chunk.SetBlock(localX, worldY, localZ, block);
-
-            // Rebuild this chunk, and neighbours whose faces or ambient
-            // occlusion touch the changed block.
-            int size = Config.ChunkSize;
-            int minDx = localX == 0 ? -1 : 0;
-            int maxDx = localX == size - 1 ? 1 : 0;
-            int minDz = localZ == 0 ? -1 : 0;
-            int maxDz = localZ == size - 1 ? 1 : 0;
-
-            for (int dz = minDz; dz <= maxDz; dz++)
-            for (int dx = minDx; dx <= maxDx; dx++)
+            if (!_edits.TryGetValue(coord, out Dictionary<int, BlockId> chunkEdits))
             {
-                var affected = new ChunkCoord(coord.X + dx, coord.Z + dz);
-
-                if (_views.ContainsKey(affected))
-                    _dirty.Add(affected);
+                chunkEdits = new Dictionary<int, BlockId>();
+                _edits.Add(coord, chunkEdits);
             }
+
+            chunkEdits[EditKey(localX, worldY, localZ)] = block;
+
+            if (loaded)
+            {
+                chunk.SetBlock(localX, worldY, localZ, block);
+
+                // Rebuild this chunk, and neighbours whose faces or ambient
+                // occlusion touch the changed block.
+                int size = Config.ChunkSize;
+                int minDx = localX == 0 ? -1 : 0;
+                int maxDx = localX == size - 1 ? 1 : 0;
+                int minDz = localZ == 0 ? -1 : 0;
+                int maxDz = localZ == size - 1 ? 1 : 0;
+
+                for (int dz = minDz; dz <= maxDz; dz++)
+                for (int dx = minDx; dx <= maxDx; dx++)
+                {
+                    var affected = new ChunkCoord(coord.X + dx, coord.Z + dz);
+
+                    if (_views.ContainsKey(affected))
+                        _dirty.Add(affected);
+                }
+            }
+
+            BlockChanged?.Invoke(new Vector3Int(worldX, worldY, worldZ), block);
         }
 
+        /// <summary>All remembered player edits (voxel position, block).</summary>
+        public List<KeyValuePair<Vector3Int, BlockId>> GetAllEdits()
+        {
+            var list = new List<KeyValuePair<Vector3Int, BlockId>>();
+            int size = Config?.ChunkSize ?? settings.ChunkSize;
+
+            foreach (KeyValuePair<ChunkCoord, Dictionary<int, BlockId>> chunkEdits in _edits)
+            {
+                foreach (KeyValuePair<int, BlockId> edit in chunkEdits.Value)
+                {
+                    DecodeEditKey(edit.Key, size, out int lx, out int y, out int lz);
+
+                    list.Add(new KeyValuePair<Vector3Int, BlockId>(
+                        new Vector3Int(chunkEdits.Key.X * size + lx, y, chunkEdits.Key.Z * size + lz),
+                        edit.Value));
+                }
+            }
+
+            return list;
+        }
+
+        // ------------------------------------------------------------
+        // World units (metres) <-> voxels
+        // ------------------------------------------------------------
+
+        /// <summary>Voxel containing a world position.</summary>
+        public Vector3Int WorldToVoxel(Vector3 position)
+        {
+            float voxel = VoxelSize;
+
+            return new Vector3Int(
+                Mathf.FloorToInt(position.x / voxel),
+                Mathf.FloorToInt(position.y / voxel),
+                Mathf.FloorToInt(position.z / voxel));
+        }
+
+        /// <summary>World position of a voxel's centre.</summary>
+        public Vector3 VoxelCenter(Vector3Int voxel)
+        {
+            float size = VoxelSize;
+
+            return new Vector3(
+                (voxel.x + 0.5f) * size,
+                (voxel.y + 0.5f) * size,
+                (voxel.z + 0.5f) * size);
+        }
+
+        /// <summary>Chunk containing a world position.</summary>
+        public ChunkCoord WorldPositionToChunk(Vector3 position)
+        {
+            Vector3Int voxel = WorldToVoxel(position);
+            return WorldToChunkCoord(voxel.x, voxel.z);
+        }
+
+        /// <summary>Block at a world position (metres); never generates.</summary>
+        public bool TryGetLoadedBlockAt(Vector3 position, out BlockId block)
+        {
+            Vector3Int voxel = WorldToVoxel(position);
+            return TryGetLoadedBlock(voxel.x, voxel.y, voxel.z, out block);
+        }
+
+        private int EditKey(int localX, int y, int localZ)
+        {
+            int size = Config.ChunkSize;
+            return localX + size * (localZ + size * y);
+        }
+
+        private static void DecodeEditKey(int key, int size, out int localX, out int y, out int localZ)
+        {
+            localX = key % size;
+            int rest = key / size;
+            localZ = rest % size;
+            y = rest / size;
+        }
+
+        /// <summary>Chunk containing voxel (x, z).</summary>
         public ChunkCoord WorldToChunkCoord(
             int worldX,
             int worldZ)
@@ -664,6 +805,17 @@ namespace World
         private void PublishChunk(ChunkData chunk)
         {
             ChunkCoord coord = chunk.Coord;
+
+            // Re-apply player edits on top of the generated terrain.
+            if (_edits.TryGetValue(coord, out Dictionary<int, BlockId> chunkEdits))
+            {
+                foreach (KeyValuePair<int, BlockId> edit in chunkEdits)
+                {
+                    DecodeEditKey(edit.Key, chunk.SizeX, out int lx, out int y, out int lz);
+                    chunk.SetBlock(lx, y, lz, edit.Value);
+                }
+            }
+
             _chunks[coord] = chunk;
 
             // Neighbours meshed while this chunk was missing treated it
@@ -757,6 +909,7 @@ namespace World
             int epoch = _epoch;
             bool buildLiquid = _renderingEnabled;
             long seed = Seed;
+            float voxelSize = VoxelSize;
             ChunkNeighborhood neighbourhood = CollectNeighbourhood(coord);
 
             Task.Run(() =>
@@ -770,7 +923,7 @@ namespace World
 
                 try
                 {
-                    result.Mesh = ChunkMeshBuilder.Build(neighbourhood, buildLiquid, seed);
+                    result.Mesh = ChunkMeshBuilder.Build(neighbourhood, buildLiquid, seed, voxelSize);
                 }
                 catch (Exception exception)
                 {
@@ -830,13 +983,13 @@ namespace World
                     if (!_wantedViewSet.Contains(result.Coord))
                         continue;
 
-                    ApplyMesh(result.Mesh);
+                    ApplyMesh(result.Mesh, colliderImmediately: false);
                     uploads++;
                 }
             }
         }
 
-        private void ApplyMesh(ChunkMeshResult result)
+        private void ApplyMesh(ChunkMeshResult result, bool colliderImmediately)
         {
             ChunkCoord coord = result.Coord;
 
@@ -846,10 +999,11 @@ namespace World
                 chunkObject.transform.SetParent(transform, false);
 
                 view = chunkObject.AddComponent<ChunkView>();
+                float chunkWorldSize = Config.ChunkSize * VoxelSize;
+
                 view.Initialize(
                     coord,
-                    Config.ChunkSize,
-                    Config.ChunkSize,
+                    new Vector3(coord.X * chunkWorldSize, 0f, coord.Z * chunkWorldSize),
                     chunkMaterial,
                     waterMaterial,
                     _renderingEnabled);
@@ -857,7 +1011,7 @@ namespace World
                 _views[coord] = view;
             }
 
-            view.ApplyMesh(result);
+            view.ApplyMesh(result, colliderImmediately);
 
             // Something changed while the mesh was being built.
             ChunkNeighborhood current = CollectNeighbourhood(coord);
@@ -919,8 +1073,8 @@ namespace World
 
             foreach (KeyValuePair<ChunkCoord, ChunkData> entry in _chunks)
             {
-                // Player-modified chunks stay until world saving exists.
-                if (!_keepData.Contains(entry.Key) && !entry.Value.IsModified)
+                // Edits are kept separately and re-applied on reload.
+                if (!_keepData.Contains(entry.Key))
                     _scratch.Add(entry.Key);
             }
 

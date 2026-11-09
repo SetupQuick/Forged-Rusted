@@ -35,6 +35,17 @@ namespace World.Blocks
         GoldOre = 20,
         CrystalOre = 21,
 
-        MossyStone = 22
+        MossyStone = 22,
+
+        AutumnLeaves = 23,
+        RedLeaves = 24,
+
+        // Small decorations: not solid, drawn as little voxel tufts.
+        TallGrass = 25,
+        FlowerRed = 26,
+        FlowerYellow = 27,
+        FlowerBlue = 28,
+        FlowerWhite = 29,
+        DryGrass = 30
     }
 }

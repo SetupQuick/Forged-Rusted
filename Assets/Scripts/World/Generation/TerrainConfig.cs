@@ -18,13 +18,25 @@ namespace World.Generation
         /// clients so mismatched builds can be detected, and world saves
         /// can use it to tell when base terrain must not be regenerated.
         /// </summary>
-        public const ushort GeneratorVersion = 2;
+        public const ushort GeneratorVersion = 3;
 
         public int Seed { get; }
+
+        /// <summary>Size of one voxel in metres (Unity units).</summary>
+        public float VoxelSize { get; }
+
+        /// <summary>
+        /// Voxels per metre. Generator constants are tuned in metres and
+        /// multiplied by this, so the world keeps its proportions at any
+        /// voxel size.
+        /// </summary>
+        public double FeatureScale => 1.0 / VoxelSize;
+
         public int ChunkSize { get; }
         public int WorldHeight { get; }
         public int SeaLevel { get; }
 
+        // All in voxels.
         public double ContinentScale { get; }
         public double MountainHeight { get; }
         public double HillHeight { get; }
@@ -38,16 +50,27 @@ namespace World.Generation
         public bool StructuresEnabled { get; }
         public double TreeDensity { get; }
 
+        /// <param name="seed">World seed.</param>
+        /// <param name="voxelSize">Metres per voxel.</param>
+        /// <param name="chunkSize">Chunk width in voxels.</param>
+        /// <param name="worldHeight">World height in voxels.</param>
+        /// <param name="seaLevel">Sea level in voxels.</param>
+        /// <param name="continentScale">Size of continents in metres.</param>
+        /// <param name="mountainHeight">Mountain height in metres.</param>
+        /// <param name="hillHeight">Hill height in metres.</param>
+        /// <param name="biomeScale">Size of climate zones in metres.</param>
+        /// <param name="snowLineAboveSea">Snow line in metres above sea level.</param>
         public TerrainConfig(
             int seed,
-            int chunkSize = 16,
-            int worldHeight = 256,
-            int seaLevel = 64,
+            float voxelSize = 0.5f,
+            int chunkSize = 32,
+            int worldHeight = 320,
+            int seaLevel = 80,
             double continentScale = 1400,
-            double mountainHeight = 120,
-            double hillHeight = 20,
+            double mountainHeight = 80,
+            double hillHeight = 10,
             double biomeScale = 1000,
-            int snowLineAboveSea = 95,
+            double snowLineAboveSea = 62,
             bool cavesEnabled = true,
             double caveDensity = 1.0,
             bool oresEnabled = true,
@@ -61,20 +84,27 @@ namespace World.Generation
             if (worldHeight < 32)
                 throw new ArgumentOutOfRangeException(nameof(worldHeight));
 
+            if (voxelSize < 0.05f || voxelSize > 4f)
+                throw new ArgumentOutOfRangeException(nameof(voxelSize));
+
             Seed = seed;
+            VoxelSize = voxelSize;
             ChunkSize = chunkSize;
             WorldHeight = worldHeight;
             SeaLevel = Clamp(seaLevel, 8, worldHeight - 16);
 
-            ContinentScale = Math.Max(100, continentScale);
+            double perMetre = 1.0 / voxelSize;
+
+            // Everything below is stored in voxels.
+            ContinentScale = Math.Max(100, continentScale) * perMetre;
+            HillHeight = Math.Max(0, hillHeight) * perMetre;
 
             // Leave headroom above the highest peaks for trees.
-            double maxMountain = worldHeight - SeaLevel - 40 - hillHeight;
-            MountainHeight = Math.Max(0, Math.Min(mountainHeight, maxMountain));
+            double maxMountain = worldHeight - SeaLevel - 26 * perMetre - HillHeight - 20 * perMetre;
+            MountainHeight = Math.Max(0, Math.Min(mountainHeight * perMetre, maxMountain));
 
-            HillHeight = Math.Max(0, hillHeight);
-            BiomeScale = Math.Max(100, biomeScale);
-            SnowLine = Math.Min(SeaLevel + Math.Max(10, snowLineAboveSea), worldHeight - 2);
+            BiomeScale = Math.Max(100, biomeScale) * perMetre;
+            SnowLine = (int)Math.Min(SeaLevel + Math.Max(5, snowLineAboveSea) * perMetre, worldHeight - 2);
 
             CavesEnabled = cavesEnabled;
             CaveDensity = Math.Max(0, caveDensity);
@@ -107,6 +137,7 @@ namespace World.Generation
                     }
 
                     Add(GeneratorVersion);
+                    Add(BitConverter.DoubleToInt64Bits(VoxelSize));
                     Add(ChunkSize);
                     Add(WorldHeight);
                     Add(SeaLevel);

@@ -110,11 +110,11 @@ namespace World.Streaming
             RebuildWantedChunks();
         }
 
-        /// <summary>Visible radius in blocks for the local player.</summary>
-        public float RenderDistanceBlocks =>
+        /// <summary>Visible radius in metres for the local player.</summary>
+        public float RenderDistanceMetres =>
             renderDistance * (worldManager != null && worldManager.Config != null
-                ? worldManager.Config.ChunkSize
-                : 16);
+                ? worldManager.Config.ChunkSize * worldManager.VoxelSize
+                : 16f);
 
         private void ApplyFog()
         {
@@ -130,7 +130,7 @@ namespace World.Streaming
 
             _appliedFogDistance = renderDistance;
 
-            float end = RenderDistanceBlocks * 0.95f;
+            float end = RenderDistanceMetres * 0.95f;
 
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.Linear;
@@ -181,9 +181,7 @@ namespace World.Streaming
         {
             _targets.Add(new Target
             {
-                Center = worldManager.WorldToChunkCoord(
-                    Mathf.FloorToInt(position.x),
-                    Mathf.FloorToInt(position.z)),
+                Center = worldManager.WorldPositionToChunk(position),
                 Radius = radius
             });
         }

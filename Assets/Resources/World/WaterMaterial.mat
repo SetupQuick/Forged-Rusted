@@ -26,8 +26,11 @@ Material:
     m_TexEnvs: []
     m_Ints: []
     m_Floats:
-    - _Opacity: 0.72
-    - _SpecularStrength: 0.6
+    - _Opacity: 0.68
+    - _SpecularStrength: 2
+    - _ReflectionStrength: 0.75
+    - _RippleStrength: 0.12
+    - _RippleSpeed: 1
     m_Colors:
     - _Tint: {r: 1, g: 1, b: 1, a: 1}
   m_BuildTextureStacks: []

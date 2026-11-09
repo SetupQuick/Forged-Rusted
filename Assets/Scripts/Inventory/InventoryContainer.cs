@@ -37,6 +37,28 @@ namespace Items
             Changed?.Invoke();
         }
 
+        /// <summary>Replaces every slot at once (one Changed event).</summary>
+        public void SetAll(ItemStack[] stacks, bool notify = true)
+        {
+            for (int i = 0; i < _slots.Length; i++)
+                _slots[i] = stacks != null && i < stacks.Length && !stacks[i].IsEmpty ? stacks[i] : ItemStack.Empty;
+
+            if (notify)
+                Changed?.Invoke();
+        }
+
+        /// <summary>Copies all slots.</summary>
+        public ItemStack[] Snapshot()
+        {
+            return (ItemStack[])_slots.Clone();
+        }
+
+        /// <summary>Raises Changed (after silent updates).</summary>
+        public void NotifyChanged()
+        {
+            Changed?.Invoke();
+        }
+
         /// <summary>
         /// Adds items, filling existing stacks first (hotbar first), then
         /// empty slots. Returns how many did not fit.

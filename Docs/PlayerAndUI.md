@@ -44,8 +44,8 @@ Water has no collider; the motor swims instead:
   pickups (look at a `PickupItem` with a collider and press E). Gives a
   stack of each basic block at spawn for testing (`giveStarterBlocks`).
 
-The inventory is client-side for now. It should become server
-authoritative together with networked block placing/breaking.
+The server owns the inventory; the client predicts changes (see
+`Docs/Building.md`). Scene-object pickups (E) work offline only.
 
 ## HUD (`Assets/Scripts/UI/GameHud.cs`, `Inventory/InventoryUI.cs`)
 
@@ -57,5 +57,5 @@ Built from code when the local player spawns - no scene setup needed.
   right-click to split / place one, shift-click to move between hotbar
   and backpack. Movement and mouse look pause while it is open.
 
-Not done yet: health bar (there is no health system yet), block
-placing/breaking, dropping items into the world.
+Not done yet: health bar (there is no health system yet), dropping
+items into the world.

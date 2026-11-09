@@ -1,3 +1,4 @@
+using System;
 using World.Blocks;
 using World.Generation.Noise;
 
@@ -51,6 +52,11 @@ namespace World.Generation
             var chunk = context.Chunk;
             double scale = context.Config.SeaLevel / 64.0;
 
+            // Tuned for 16x16 chunks of 1 m voxels: keep the same amount
+            // of ore per area and the same vein size in metres.
+            double perChunk = chunk.SizeX * chunk.SizeZ / 256.0;
+            double veinScale = context.Config.FeatureScale;
+
             for (int oreIndex = 0; oreIndex < Ores.Length; oreIndex++)
             {
                 OreType ore = Ores[oreIndex];
@@ -62,13 +68,16 @@ namespace World.Generation
                 if (maxY > chunk.SizeY - 1)
                     maxY = chunk.SizeY - 1;
 
-                for (int vein = 0; vein < ore.VeinsPerChunk; vein++)
+                int veins = (int)Math.Round(ore.VeinsPerChunk * perChunk);
+
+                for (int vein = 0; vein < veins; vein++)
                 {
                     int x = random.Range(0, chunk.SizeX);
                     int y = random.Range(minY, maxY + 1);
                     int z = random.Range(0, chunk.SizeZ);
 
-                    int size = random.Range(ore.VeinSize / 2, ore.VeinSize + 1);
+                    int veinSize = (int)(ore.VeinSize * veinScale);
+                    int size = random.Range(veinSize / 2, veinSize + 1);
 
                     for (int step = 0; step < size; step++)
                     {

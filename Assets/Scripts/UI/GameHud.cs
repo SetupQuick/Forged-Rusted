@@ -26,6 +26,7 @@ namespace GameUI
 
         private PlayerInventory _inventory;
         private CharacterMotor _motor;
+        private Gameplay.BlockInteraction _interaction;
         private InventoryUI _inventoryUI;
 
         private RectTransform _crosshair;
@@ -135,13 +136,14 @@ namespace GameUI
             // Controls hint.
             TextMeshProUGUI hint = UiBuilder.Text("Hint", root, 16, TextAlignmentOptions.BottomLeft, new Color(1, 1, 1, 0.55f));
             UiBuilder.Place(hint.rectTransform, new Vector2(0, 0), new Vector2(0, 0), new Vector2(16, 12), new Vector2(700, 24));
-            hint.text = "Tab inventory   1-9 / wheel hotbar   E pick up   Space swim up   Ctrl/C dive";
+            hint.text = "LMB break   RMB place   1-9 / wheel hotbar   Tab inventory   Space swim up   Ctrl/C dive";
         }
 
         private void Bind(PlayerInventory inventory)
         {
             _inventory = inventory;
             _motor = inventory.GetComponent<CharacterMotor>();
+            _interaction = inventory.GetComponent<Gameplay.BlockInteraction>();
 
             var root = (RectTransform)transform;
             BuildHotbar(root);
@@ -255,10 +257,19 @@ namespace GameUI
             _crosshair.gameObject.SetActive(!inventoryOpen);
             _underwater.enabled = _motor != null && _motor.IsHeadUnderwater;
 
+            if (_interaction == null)
+                _interaction = _inventory.GetComponent<Gameplay.BlockInteraction>();
+
             PickupItem target = _inventory.PickupTarget;
-            _prompt.text = target != null && !inventoryOpen
-                ? $"[E] Pick up {target.itemData.DisplayName}" + (target.amount > 1 ? $" x{target.amount}" : string.Empty)
-                : string.Empty;
+
+            if (inventoryOpen)
+                _prompt.text = string.Empty;
+            else if (target != null)
+                _prompt.text = $"[E] Pick up {target.itemData.DisplayName}" + (target.amount > 1 ? $" x{target.amount}" : string.Empty);
+            else if (_interaction != null && _interaction.HasTarget)
+                _prompt.text = $"<size=18><color=#FFFFFFAA>{World.Blocks.BlockRegistry.Get(_interaction.Target.Block).Name}</color></size>";
+            else
+                _prompt.text = string.Empty;
 
             _itemNameTimer -= Time.unscaledDeltaTime;
             _itemName.alpha = Mathf.Clamp01(_itemNameTimer / 0.5f);
