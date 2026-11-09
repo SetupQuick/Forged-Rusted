@@ -42,6 +42,9 @@ namespace World.Rendering
         /// <summary>Combined chunk versions the current mesh was built from.</summary>
         public long BuiltFromVersion { get; private set; }
 
+        /// <summary>0 = full detail, 1 = simplified distant mesh (no collider).</summary>
+        public int Lod { get; private set; }
+
         /// <summary>The current mesh includes grass and flowers.</summary>
         public bool HasDetail { get; private set; }
 
@@ -106,12 +109,21 @@ namespace World.Rendering
         public void ApplyMesh(ChunkMeshResult result, bool colliderImmediately)
         {
             BuiltFromVersion = result.SourceVersion;
+            Lod = result.Lod;
 
             Mesh previous = _mesh;
-            _mesh = CreateMesh(result.Solid, "Solid");
+            _mesh = CreateMesh(result.Solid, result.Lod > 0 ? "Solid_LOD1" : "Solid");
             _meshFilter.sharedMesh = _mesh;
 
-            if (_mesh.vertexCount == 0 || colliderImmediately)
+            if (result.Lod > 0)
+            {
+                // Nobody stands on a distant chunk; it gets a full-detail
+                // mesh and collider again before anyone comes close. This
+                // also saves the collider cooking for most of the world.
+                RetireBaking();
+                SetCollider(null);
+            }
+            else if (_mesh.vertexCount == 0 || colliderImmediately)
             {
                 // Cook now on the main thread.
                 SetCollider(_mesh.vertexCount == 0 ? null : _mesh);

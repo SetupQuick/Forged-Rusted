@@ -65,6 +65,7 @@ namespace Game
         public static float FieldOfView = 75f;
         public static GraphicsPreset Preset = GraphicsPreset.High;
         public static int GrassDistance = 3;     // chunks with grass/flowers, 0 = none
+        public static int SimplifyDistance = 5;  // chunks beyond this use simplified meshes, 0 = never
         public static bool Clouds = true;
         public static bool Wind = true;
         public static float RenderScale = 1f;    // 0.5..1 of the screen resolution
@@ -92,6 +93,8 @@ namespace Game
         public const int MaxRenderDistance = 16;
         public const int MaxGrassDistance = 6;
 
+        public static readonly int[] SimplifyOptions = { 0, 3, 4, 5, 6, 8 };
+
         public static readonly float[] RenderScaleOptions = { 0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1f };
 
         /// <summary>Raised after settings changed (Apply or Load).</summary>
@@ -113,6 +116,7 @@ namespace Game
             FieldOfView = Mathf.Clamp(PlayerPrefs.GetFloat(Prefix + "FieldOfView", 75f), 50f, 110f);
             Preset = (GraphicsPreset)Mathf.Clamp(PlayerPrefs.GetInt(Prefix + "Preset", (int)GraphicsPreset.High), 0, 4);
             GrassDistance = Mathf.Clamp(PlayerPrefs.GetInt(Prefix + "GrassDistance", 3), 0, MaxGrassDistance);
+            SimplifyDistance = Mathf.Clamp(PlayerPrefs.GetInt(Prefix + "SimplifyDistance", 5), 0, 32);
             Clouds = PlayerPrefs.GetInt(Prefix + "Clouds", 1) != 0;
             Wind = PlayerPrefs.GetInt(Prefix + "Wind", 1) != 0;
             RenderScale = Mathf.Clamp(PlayerPrefs.GetFloat(Prefix + "RenderScale", 1f), 0.5f, 1f);
@@ -159,6 +163,7 @@ namespace Game
             PlayerPrefs.SetFloat(Prefix + "FieldOfView", FieldOfView);
             PlayerPrefs.SetInt(Prefix + "Preset", (int)Preset);
             PlayerPrefs.SetInt(Prefix + "GrassDistance", GrassDistance);
+            PlayerPrefs.SetInt(Prefix + "SimplifyDistance", SimplifyDistance);
             PlayerPrefs.SetInt(Prefix + "Clouds", Clouds ? 1 : 0);
             PlayerPrefs.SetInt(Prefix + "Wind", Wind ? 1 : 0);
             PlayerPrefs.SetFloat(Prefix + "RenderScale", RenderScale);
@@ -232,19 +237,19 @@ namespace Game
             {
                 case GraphicsPreset.Low:
                     RenderDistance = 5; Shadows = ShadowQuality.Off; GrassDistance = 1; Clouds = false; Wind = false;
-                    PostProcessing = false; RenderScale = 0.8f; AntiAliasing = AntiAliasing.Fxaa;
+                    PostProcessing = false; RenderScale = 0.8f; AntiAliasing = AntiAliasing.Fxaa; SimplifyDistance = 3;
                     break;
                 case GraphicsPreset.Medium:
                     RenderDistance = 6; Shadows = ShadowQuality.Low; GrassDistance = 2; Clouds = true; Wind = true;
-                    PostProcessing = true; RenderScale = 1f; AntiAliasing = AntiAliasing.Fxaa;
+                    PostProcessing = true; RenderScale = 1f; AntiAliasing = AntiAliasing.Fxaa; SimplifyDistance = 4;
                     break;
                 case GraphicsPreset.High:
                     RenderDistance = 8; Shadows = ShadowQuality.Medium; GrassDistance = 3; Clouds = true; Wind = true;
-                    PostProcessing = true; RenderScale = 1f; AntiAliasing = AntiAliasing.Smaa;
+                    PostProcessing = true; RenderScale = 1f; AntiAliasing = AntiAliasing.Smaa; SimplifyDistance = 5;
                     break;
                 case GraphicsPreset.Ultra:
                     RenderDistance = 12; Shadows = ShadowQuality.High; GrassDistance = 5; Clouds = true; Wind = true;
-                    PostProcessing = true; RenderScale = 1f; AntiAliasing = AntiAliasing.Smaa;
+                    PostProcessing = true; RenderScale = 1f; AntiAliasing = AntiAliasing.Smaa; SimplifyDistance = 6;
                     break;
             }
         }

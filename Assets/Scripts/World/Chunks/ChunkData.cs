@@ -19,7 +19,7 @@ namespace World.Chunks
         private readonly byte[] _biomes;
         private int _version;
 
-        public ChunkCoord Coord { get; }
+        public ChunkCoord Coord { get; private set; }
 
         public int SizeX { get; }
         public int SizeY { get; }
@@ -121,6 +121,22 @@ namespace World.Chunks
 
             SetBlockRaw(x, y, z, block);
             return true;
+        }
+
+        /// <summary>
+        /// Empties the chunk and gives it a new position, so scratch
+        /// chunks (e.g. the half-resolution copies used for distant
+        /// meshes) can be reused instead of allocated every time.
+        /// Only for chunks that are not published to the world.
+        /// </summary>
+        public void ResetForReuse(ChunkCoord coord)
+        {
+            Coord = coord;
+            Array.Clear(_blocks, 0, _blocks.Length);
+            Array.Clear(_biomes, 0, _biomes.Length);
+            HighestBlockY = -1;
+            IsModified = false;
+            Volatile.Write(ref _version, 0);
         }
 
         /// <summary>Biome of a column, as the raw byte of World.Generation.BiomeId.</summary>

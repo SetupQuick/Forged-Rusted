@@ -140,6 +140,9 @@ namespace World.Rendering
 
         /// <summary>Built with grass/flowers (near the player).</summary>
         public bool HasDetail;
+
+        /// <summary>0 = full detail, 1 = half resolution for distant chunks (no collider).</summary>
+        public int Lod;
         public long SourceVersion;
     }
 

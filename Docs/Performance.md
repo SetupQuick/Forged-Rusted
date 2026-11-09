@@ -34,6 +34,7 @@ monitor's refresh rate (or 60).
 | Render distance | 5 chunks (80 m) | 6 (96 m) | 8 (128 m) | 12 (192 m) |
 | Shadows | off | 35 m, 1 cascade, 1024, hard | 60 m, 2 cascades, 2048, soft | 100 m, 4 cascades, 4096, soft |
 | Grass & flowers | 1 chunk | 2 chunks | 3 chunks | 5 chunks |
+| Distant terrain simplified beyond | 48 m | 64 m | 80 m | 96 m |
 | Clouds / wind | off / off | on / on | on / on | on / on |
 | Post-processing | off | on | on | on |
 | Render scale | 80 % | 100 % | 100 % | 100 % |
@@ -69,12 +70,13 @@ camera get them now.
 | Setup | Main pass | Extra depth pass | Shadow pass | **Total** |
 |---|---|---|---|---|
 | Before (old defaults) | 3.49 M | 3.46 M (SSAO) | 4.50 M | **11.4 M** |
-| Low | 0.92 M | - | - | **0.9 M** |
-| Medium | 1.38 M | - | 0.22 M | **1.6 M** |
-| High | 2.32 M | - | 0.82 M | **3.1 M** |
-| Ultra | 5.14 M | - | 1.92 M | **7.1 M** |
+| Low | 0.59 M | - | - | **0.6 M** |
+| Medium | 1.00 M | - | 0.22 M | **1.2 M** |
+| High | 1.61 M | - | 0.82 M | **2.4 M** |
+| Ultra (192 m) | 2.95 M | - | 1.92 M | **4.9 M** |
+| Ultra at 256 m view | 3.70 M | - | 1.92 M | **5.6 M** |
 
-The default (High) draws about **3.6x fewer triangles** than before at
+The default (High) draws about **4.7x fewer triangles** than before at
 the same 128 m view distance. Where that came from:
 
 1. **SSAO was on** in the URP renderer (`PC_Renderer`). It forces a
@@ -88,6 +90,44 @@ the same 128 m view distance. Where that came from:
 4. **Shadow distance 120 m with 4 cascades** -> 60 m with 2 cascades on
    High. Each cascade draws the terrain again into the shadow map.
 5. **Grass only near the camera** (3 chunks on High).
+6. **Simplified distant chunks** (see below): High 3.1 M -> 2.4 M,
+   Ultra 7.1 M -> 4.9 M, and a 256 m view now costs less than 128 m
+   did before.
+
+### Distant chunks (level of detail)
+
+Chunks further away than the "Distant terrain" setting are built by
+`ChunkLod`:
+
+* **Half resolution**: 2x2x2 voxels become one 1 m block (4x fewer
+  faces). A cell is solid if any of its voxels is, and takes the block
+  of its highest voxel, so grass stays on top and thin tree trunks do
+  not disappear.
+* **Hidden caves filled**: air that cannot be reached from the sky
+  inside the chunk becomes stone, removing cave walls nobody can see
+  from far away.
+* **No grass, no collider** (collider cooking was a big part of the
+  loading cost). Chunks within 2 of *any* player stay full detail with a
+  collider, also on a listen server where other players are far from
+  the host's camera; if a player reaches a simplified chunk it is
+  rebuilt immediately before physics needs it.
+* Switching has one chunk of hysteresis, so walking back and forth over
+  the boundary does not rebuild the same chunks.
+
+| per chunk | full detail | simplified |
+|---|---|---|
+| Triangles (no grass) | 8 874 | **2 027** (2 343 without cave fill) |
+| Build time | 5.2 ms | **3.6 ms** |
+| Garbage | 87 KB | ~0 KB |
+
+GPU mesh memory with grass 3 and simplified beyond 6 chunks:
+148 MB at view 8 (was 186 MB originally), 184 MB at 12 (was 405 MB),
+236 MB at 16 (was 713 MB).
+
+Known limitation: where full and simplified chunks meet there can be a
+thin 0.5 m step (simplified ground is rounded *up* to 1 m). Rounding
+down would open see-through gaps instead, so this is the safer choice;
+it sits inside the fog and is mostly visible through clear water.
 
 ### Memory
 
@@ -166,9 +206,9 @@ globals per frame.
 * **Vertex compression**: positions as 16-bit, normals as one byte
   index, colours already 8-bit -> ~16 bytes per vertex instead of 36.
   Roughly halves GPU mesh memory and vertex bandwidth.
-* **Greedy meshing for distant chunks / LOD**: merge equal faces, or
-  build far chunks at half resolution (1 m voxels) - 3-4x fewer
-  triangles beyond ~100 m.
+* **Greedy meshing**: merging equal neighbouring faces. Limited gain
+  for us because every voxel has its own colour variation; worth it
+  for a second, even coarser level (2 m) at very long view distances.
 * **Occlusion**: skip chunks fully hidden behind mountains / underground
   caves (cheap flood-fill visibility per chunk section).
 * **Upscaling**: URP's FSR 1 / STP upscaler with render scale 70-80 %

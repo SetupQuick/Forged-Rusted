@@ -77,6 +77,14 @@ namespace World
         [Range(0, 8)]
         private int detailRadius = 3;
 
+        [Tooltip("Chunks further than this from the camera use a simplified " +
+                 "half-resolution mesh with hidden caves filled (about 4x " +
+                 "fewer triangles, no collider). 0 = always full detail. " +
+                 "Set from the graphics settings.")]
+        [SerializeField]
+        [Range(0, 32)]
+        private int lodDistance = 6;
+
         private readonly Dictionary<ChunkCoord, ChunkData> _chunks =
             new Dictionary<ChunkCoord, ChunkData>();
 
@@ -124,6 +132,11 @@ namespace World
         private ChunkCoord _detailCenter;
         private bool _detailCenterKnown;
 
+        // Chunks players are standing in (this frame), which must keep
+        // full detail and colliders. Value = frame it was last requested.
+        private readonly Dictionary<ChunkCoord, int> _collisionCenters = new Dictionary<ChunkCoord, int>();
+        private readonly List<ChunkCoord> _expiredCenters = new List<ChunkCoord>();
+
         public WorldSettings Settings =>
             settings;
 
@@ -145,6 +158,34 @@ namespace World
 
         public int PendingJobCount =>
             _runningJobs;
+
+        /// <summary>Chunks beyond this distance use the simplified mesh (0 = never).</summary>
+        public int LodDistance
+        {
+            get => lodDistance;
+            set
+            {
+                value = Mathf.Clamp(value, 0, 32);
+                if (value == lodDistance)
+                    return;
+
+                lodDistance = value;
+                _detailCenterKnown = false; // re-evaluate every chunk
+            }
+        }
+
+        /// <summary>Number of chunks currently drawn with the simplified mesh.</summary>
+        public int LodChunkCount
+        {
+            get
+            {
+                int count = 0;
+                foreach (ChunkView view in _views.Values)
+                    if (view != null && view.Lod > 0)
+                        count++;
+                return count;
+            }
+        }
 
         /// <summary>Chunks around the camera with grass and flowers (0 = none).</summary>
         public int DetailRadius
@@ -278,6 +319,7 @@ namespace World
             }
 
             WorldClock.Advance(Time.deltaTime);
+            ExpireCollisionCenters();
             UpdateDetailCenter();
             ProcessCompletedJobs();
             ScheduleJobs();
@@ -325,7 +367,53 @@ namespace World
                     view.DropDetail();
 
                 view.SetDetailVisible(distance <= detailRadius);
+
+                // Simplified meshes far away, with one chunk of hysteresis
+                // so walking back and forth does not rebuild the same row.
+                if (view.Lod > 0 && !WantsLod(pair.Key, hysteresis: -1))
+                    _dirty.Add(pair.Key);
+                else if (view.Lod == 0 && WantsLod(pair.Key, hysteresis: 1))
+                    _dirty.Add(pair.Key);
             }
+        }
+
+        /// <summary>
+        /// Far from the camera and from every player that needs collision.
+        /// hysteresis shifts the distance (+1 = only once clearly beyond).
+        /// </summary>
+        private bool WantsLod(ChunkCoord coord, int hysteresis = 0)
+        {
+            if (!_renderingEnabled || lodDistance <= 0 || !_detailCenterKnown)
+                return false;
+
+            if (DetailDistance(coord) <= lodDistance + Math.Max(0, hysteresis))
+                return false;
+
+            return !NearCollisionCenter(coord);
+        }
+
+        private bool NearCollisionCenter(ChunkCoord coord)
+        {
+            foreach (ChunkCoord center in _collisionCenters.Keys)
+            {
+                if (Math.Abs(center.X - coord.X) <= 2 && Math.Abs(center.Z - coord.Z) <= 2)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private void ExpireCollisionCenters()
+        {
+            int frame = Time.frameCount;
+            _expiredCenters.Clear();
+
+            foreach (KeyValuePair<ChunkCoord, int> pair in _collisionCenters)
+                if (frame - pair.Value > 120)
+                    _expiredCenters.Add(pair.Key);
+
+            foreach (ChunkCoord coord in _expiredCenters)
+                _collisionCenters.Remove(coord);
         }
 
         private int DetailDistance(ChunkCoord coord)
@@ -567,6 +655,7 @@ namespace World
 
             if (_views.TryGetValue(coord, out ChunkView existing) &&
                 existing != null &&
+                existing.Lod == 0 &&
                 !_dirty.Contains(coord))
             {
                 existing.EnsureColliderNow();
@@ -593,14 +682,33 @@ namespace World
         /// </summary>
         public void EnsureCollisionAround(ChunkCoord center)
         {
+            _collisionCenters[center] = Time.frameCount;
+
             EnsureChunkReadyNow(center);
 
-            for (int dz = -1; dz <= 1; dz++)
-            for (int dx = -1; dx <= 1; dx++)
+            for (int dz = -2; dz <= 2; dz++)
+            for (int dx = -2; dx <= 2; dx++)
             {
-                if ((dx != 0 || dz != 0) &&
-                    _views.TryGetValue(new ChunkCoord(center.X + dx, center.Z + dz), out ChunkView view) &&
-                    view != null)
+                if ((dx == 0 && dz == 0) ||
+                    !_views.TryGetValue(new ChunkCoord(center.X + dx, center.Z + dz), out ChunkView view) ||
+                    view == null)
+                {
+                    continue;
+                }
+
+                bool adjacent = Math.Abs(dx) <= 1 && Math.Abs(dz) <= 1;
+
+                if (view.Lod > 0)
+                {
+                    // A simplified distant chunk has no collider. Next to
+                    // the player it is rebuilt right now; one further out
+                    // in the background (it is usually done before needed).
+                    if (adjacent)
+                        EnsureChunkReadyNow(view.Coord);
+                    else
+                        _dirty.Add(view.Coord);
+                }
+                else if (adjacent)
                 {
                     view.EnsureColliderNow();
                 }
@@ -1071,6 +1179,7 @@ namespace World
             long seed = Seed;
             float voxelSize = VoxelSize;
             bool includeDetail = WantsDetail(coord);
+            bool lod = WantsLod(coord);
             ChunkNeighborhood neighbourhood = CollectNeighbourhood(coord);
 
             Task.Run(() =>
@@ -1084,7 +1193,9 @@ namespace World
 
                 try
                 {
-                    result.Mesh = ChunkMeshBuilder.Build(neighbourhood, buildLiquid, seed, voxelSize, includeDetail);
+                    result.Mesh = lod
+                        ? ChunkLod.Build(neighbourhood, buildLiquid, seed, voxelSize)
+                        : ChunkMeshBuilder.Build(neighbourhood, buildLiquid, seed, voxelSize, includeDetail);
                 }
                 catch (Exception exception)
                 {
@@ -1145,7 +1256,13 @@ namespace World
                 {
                     _meshing.Remove(result.Coord);
 
-                    if (_wantedViewSet.Contains(result.Coord))
+                    if (result.Mesh.Lod > 0 && !WantsLod(result.Coord, hysteresis: -1))
+                    {
+                        // Built as a distant mesh, but a player or the
+                        // camera came close meanwhile: build it again.
+                        _dirty.Add(result.Coord);
+                    }
+                    else if (_wantedViewSet.Contains(result.Coord))
                     {
                         ApplyMesh(result.Mesh, colliderImmediately: false);
                         uploads++;

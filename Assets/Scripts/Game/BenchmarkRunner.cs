@@ -62,6 +62,7 @@ namespace Game
             public long SetPassCalls;
             public float LoadSeconds;
             public int Chunks;
+            public int SimplifiedChunks;
             public long SystemMemoryMb;
             public long GfxMemoryMb;
             public string Settings;
@@ -317,10 +318,11 @@ namespace Game
                 SetPassCalls = _setPassSum / samples,
                 LoadSeconds = loadSeconds,
                 Chunks = world.VisibleChunkCount,
+                SimplifiedChunks = world.LodChunkCount,
                 SystemMemoryMb = systemMemory / (1024 * 1024),
                 GfxMemoryMb = gfxMemory / (1024 * 1024),
                 Settings = $"view {GameSettings.RenderDistance}, shadows {GameSettings.Shadows} ({shadows.Distance:0} m x{shadows.Cascades} @{shadows.Resolution}), " +
-                           $"grass {GameSettings.GrassDistance}, clouds {(GameSettings.Clouds ? "on" : "off")}, wind {(GameSettings.Wind ? "on" : "off")}, " +
+                           $"grass {GameSettings.GrassDistance}, simplified beyond {GameSettings.SimplifyDistance}, clouds {(GameSettings.Clouds ? "on" : "off")}, wind {(GameSettings.Wind ? "on" : "off")}, " +
                            $"post {(GameSettings.PostProcessing ? "on" : "off")}, scale {GameSettings.RenderScale:0.##}, AA {GameSettings.AntiAliasing}"
             };
         }
@@ -343,7 +345,7 @@ namespace Game
 
             text.AppendLine();
             foreach (Result r in _results)
-                text.AppendLine($"{r.Name}: {r.Settings}");
+                text.AppendLine($"{r.Name}: {r.Settings}; {r.Chunks} chunks ({r.SimplifiedChunks} simplified)");
 
             if (_cancelled)
                 text.AppendLine("(cancelled)");
@@ -362,15 +364,15 @@ namespace Game
                     $"benchmark-{DateTime.Now:yyyyMMdd-HHmmss}.csv");
 
                 var csv = new StringBuilder();
-                csv.AppendLine("preset,frames,avg_fps,low1_fps,avg_ms,p99_ms,worst_ms,cpu_ms,gpu_ms,triangles,draw_calls,setpass_calls,load_s,chunks,system_mb,gfx_mb,settings,cpu,gpu,resolution");
+                csv.AppendLine("preset,frames,avg_fps,low1_fps,avg_ms,p99_ms,worst_ms,cpu_ms,gpu_ms,triangles,draw_calls,setpass_calls,load_s,chunks,simplified_chunks,system_mb,gfx_mb,settings,cpu,gpu,resolution");
 
                 foreach (Result r in _results)
                 {
                     csv.AppendLine(string.Format(CultureInfo.InvariantCulture,
-                        "{0},{1},{2:0.0},{3:0.0},{4:0.00},{5:0.00},{6:0.00},{7:0.00},{8:0.00},{9},{10},{11},{12:0.0},{13},{14},{15},\"{16}\",\"{17}\",\"{18}\",{19}x{20}",
+                        "{0},{1},{2:0.0},{3:0.0},{4:0.00},{5:0.00},{6:0.00},{7:0.00},{8:0.00},{9},{10},{11},{12:0.0},{13},{21},{14},{15},\"{16}\",\"{17}\",\"{18}\",{19}x{20}",
                         r.Name, r.Frames, r.AverageFps, r.OnePercentLowFps, r.AverageMs, r.P99Ms, r.WorstMs, r.CpuMs, r.GpuMs,
                         r.Triangles, r.DrawCalls, r.SetPassCalls, r.LoadSeconds, r.Chunks, r.SystemMemoryMb, r.GfxMemoryMb,
-                        r.Settings, SystemInfo.processorType, SystemInfo.graphicsDeviceName, Screen.width, Screen.height));
+                        r.Settings, SystemInfo.processorType, SystemInfo.graphicsDeviceName, Screen.width, Screen.height, r.SimplifiedChunks));
                 }
 
                 File.WriteAllText(path, csv.ToString());

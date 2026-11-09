@@ -622,7 +622,7 @@ namespace Game
                 back();
             });
 
-            Image panel = MenuWidgets.Panel(screen, new Vector2(820f, 900f));
+            Image panel = MenuWidgets.Panel(screen, new Vector2(820f, 960f));
             RectTransform column = MenuWidgets.Column(panel.rectTransform, 8f, 740f);
             UiBuilder.Place(column, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -28f), new Vector2(740f, 0f));
 
@@ -752,6 +752,15 @@ namespace Game
 
             MenuWidgets.Slider(column, "Grass and flowers", 0, GameSettings.MaxGrassDistance, GameSettings.GrassDistance,
                 v => (int)v == 0 ? "Off" : $"{(int)v} chunks", v => { GameSettings.GrassDistance = (int)v; GameSettings.MarkCustom(); GameSettings.Apply(); }, wholeNumbers: true);
+
+            int simplifyIndex = Math.Max(0, Array.IndexOf(GameSettings.SimplifyOptions, GameSettings.SimplifyDistance));
+            string[] simplifyLabels = Array.ConvertAll(GameSettings.SimplifyOptions, d => d == 0 ? "Full detail everywhere" : $"Simplified beyond {d * 16} m");
+            MenuWidgets.Selector(column, "Distant terrain", simplifyLabels, simplifyIndex, i =>
+            {
+                GameSettings.SimplifyDistance = GameSettings.SimplifyOptions[i];
+                GameSettings.MarkCustom();
+                GameSettings.Apply();
+            });
 
             MenuWidgets.Toggle(column, "Clouds", GameSettings.Clouds, v => { GameSettings.Clouds = v; GameSettings.MarkCustom(); GameSettings.Apply(); });
 

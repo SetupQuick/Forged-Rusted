@@ -126,6 +126,9 @@ namespace Game
             if (world != null && world.DetailRadius != GameSettings.GrassDistance)
                 world.DetailRadius = GameSettings.GrassDistance;
 
+            if (world != null && world.LodDistance != GameSettings.SimplifyDistance)
+                world.LodDistance = GameSettings.SimplifyDistance;
+
             if (_dirty)
             {
                 CloudLayer.Enabled = GameSettings.Clouds;
