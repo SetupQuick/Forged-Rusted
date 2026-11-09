@@ -1,65 +1,292 @@
 using System.Collections.Generic;
+using Items;
+using Networking;
+using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
+using UnityEngine.UI;
 
-public class InventoryUI : MonoBehaviour
+namespace GameUI
 {
-    public PlayerInventory playerInventory;
-    public GameObject slotPrefab;
-    public Transform gridParent; // Assign InventoryPanel (with Grid Layout Group)
-
-    private List<ItemSlotUI> slotUIList = new List<ItemSlotUI>();
-
-    void Start()
+    /// <summary>
+    /// The inventory screen (Tab or I to open, Esc to close).
+    ///
+    ///   left click        pick up / put down / swap / merge a stack
+    ///   right click       pick up half / put down one
+    ///   shift + click     move between hotbar and backpack
+    ///
+    /// While open, the player stops moving and the cursor is free.
+    /// Built by <see cref="GameHud"/>; needs no scene setup.
+    /// </summary>
+    public class InventoryUI : MonoBehaviour
     {
-        InitializeSlots();
-    }
+        private const float SlotSize = 64f;
+        private const float Spacing = 6f;
+        private const int Columns = 9;
 
-    void Update()
-    {
-        // Toggle Inventory with 'I' or 'Tab'
-        if (UnityEngine.InputSystem.Keyboard.current.iKey.wasPressedThisFrame)
+        private readonly List<ItemSlotUI> _slots = new List<ItemSlotUI>();
+
+        private PlayerInventory _inventory;
+        private RectTransform _canvasRect;
+        private GameObject _root;
+        private Image _heldIcon;
+        private TextMeshProUGUI _heldCount;
+        private RectTransform _tooltip;
+        private TextMeshProUGUI _tooltipText;
+        private ItemStack _held;
+
+        public bool IsOpen => _root != null && _root.activeSelf;
+
+        public void Build(PlayerInventory inventory, RectTransform canvasRect)
         {
-            gameObject.SetActive(!gameObject.activeSelf);
-            if (gameObject.activeSelf)
+            _inventory = inventory;
+            _canvasRect = canvasRect;
+
+            // Dim the game behind the panel; clicking outside the panel
+            // does nothing (the held stack stays on the cursor).
+            Image dim = UiBuilder.Image("Inventory", canvasRect, new Color(0f, 0f, 0f, 0.45f), raycast: true);
+            UiBuilder.Stretch(dim.rectTransform);
+            _root = dim.gameObject;
+
+            InventoryContainer container = inventory.Container;
+            int backpackRows = Mathf.CeilToInt((container.Count - container.HotbarSize) / (float)Columns);
+
+            float gridWidth = Columns * SlotSize + (Columns - 1) * Spacing;
+            float backpackHeight = backpackRows * SlotSize + Mathf.Max(0, backpackRows - 1) * Spacing;
+            float panelWidth = gridWidth + 48f;
+            float panelHeight = 70f + backpackHeight + 30f + SlotSize + 34f;
+
+            Image panel = UiBuilder.Image("Panel", dim.rectTransform, UiBuilder.PanelColor, raycast: true);
+            UiBuilder.Place(panel.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, 20), new Vector2(panelWidth, panelHeight));
+            UiBuilder.AddOutline(panel, new Color(0f, 0f, 0f, 0.6f), 3f);
+
+            TextMeshProUGUI title = UiBuilder.Text("Title", panel.rectTransform, 30, TextAlignmentOptions.TopLeft, UiBuilder.TextColor);
+            UiBuilder.Place(title.rectTransform, new Vector2(0, 1), new Vector2(0, 1), new Vector2(24, -16), new Vector2(400, 40));
+            title.text = "Inventory";
+            title.fontStyle = FontStyles.Bold;
+
+            TextMeshProUGUI help = UiBuilder.Text("Help", panel.rectTransform, 16, TextAlignmentOptions.TopRight, UiBuilder.SubtleTextColor);
+            UiBuilder.Place(help.rectTransform, new Vector2(1, 1), new Vector2(1, 1), new Vector2(-24, -24), new Vector2(520, 30));
+            help.text = "Click: move   Right-click: split   Shift-click: quick move";
+
+            // Backpack grid.
+            RectTransform backpack = CreateGrid("Backpack", panel.rectTransform, new Vector2(0, -70), backpackRows);
+
+            for (int i = container.HotbarSize; i < container.Count; i++)
+                AddSlot(backpack, i);
+
+            TextMeshProUGUI hotbarLabel = UiBuilder.Text("Hotbar Label", panel.rectTransform, 16, TextAlignmentOptions.BottomLeft, UiBuilder.SubtleTextColor);
+            UiBuilder.Place(hotbarLabel.rectTransform, new Vector2(0, 1), new Vector2(0, 1), new Vector2(24, -70 - backpackHeight - 4), new Vector2(200, 24));
+            hotbarLabel.text = "Hotbar";
+
+            RectTransform hotbar = CreateGrid("Hotbar", panel.rectTransform, new Vector2(0, -70 - backpackHeight - 30), 1);
+
+            for (int i = 0; i < container.HotbarSize; i++)
+                AddSlot(hotbar, i);
+
+            // Stack held on the cursor.
+            _heldIcon = UiBuilder.Image("Held Item", canvasRect, Color.white);
+            _heldIcon.rectTransform.sizeDelta = new Vector2(SlotSize * 0.8f, SlotSize * 0.8f);
+            _heldIcon.preserveAspect = true;
+            _heldIcon.enabled = false;
+
+            _heldCount = UiBuilder.Text("Count", _heldIcon.rectTransform, 20, TextAlignmentOptions.BottomRight, UiBuilder.TextColor);
+            UiBuilder.Stretch(_heldCount.rectTransform);
+            _heldCount.fontStyle = FontStyles.Bold;
+            UiBuilder.AddOutline(_heldCount, new Color(0, 0, 0, 0.8f), 1.5f);
+
+            // Tooltip with item name and description.
+            Image tooltip = UiBuilder.Image("Tooltip", canvasRect, new Color(0.05f, 0.05f, 0.07f, 0.95f));
+            _tooltip = tooltip.rectTransform;
+            _tooltip.pivot = new Vector2(0, 1);
+            _tooltipText = UiBuilder.Text("Text", _tooltip, 18, TextAlignmentOptions.TopLeft, UiBuilder.TextColor);
+            UiBuilder.Stretch(_tooltipText.rectTransform);
+            _tooltipText.rectTransform.offsetMin = new Vector2(10, 8);
+            _tooltipText.rectTransform.offsetMax = new Vector2(-10, -8);
+            _tooltip.gameObject.SetActive(false);
+
+            container.Changed += Refresh;
+            _root.SetActive(false);
+            Refresh();
+        }
+
+        private void OnDestroy()
+        {
+            // The panel may already be destroyed with us; just make sure
+            // the player is not left unable to move.
+            PlayerInputReader.GameplayInputBlocked = false;
+
+            if (_inventory != null && _inventory.Container != null)
+                _inventory.Container.Changed -= Refresh;
+        }
+
+        public void SetOpen(bool open)
+        {
+            if (_root == null || open == IsOpen)
+                return;
+
+            _root.SetActive(open);
+            PlayerInputReader.GameplayInputBlocked = open;
+
+            if (!open)
             {
-                RefreshUI();
+                ReturnHeldStack();
+                _tooltip.gameObject.SetActive(false);
+            }
+
+            Refresh();
+        }
+
+        private void Update()
+        {
+            if (_inventory == null)
+                return;
+
+            Keyboard keyboard = Keyboard.current;
+
+            if (keyboard != null)
+            {
+                if (keyboard.tabKey.wasPressedThisFrame || keyboard.iKey.wasPressedThisFrame)
+                    SetOpen(!IsOpen);
+                else if (IsOpen && keyboard.escapeKey.wasPressedThisFrame)
+                    SetOpen(false);
+            }
+
+            if (IsOpen)
+            {
+                FollowMouse(_heldIcon.rectTransform, Vector2.zero);
+                FollowMouse(_tooltip, new Vector2(18, -18));
             }
         }
-    }
 
-    private void InitializeSlots()
-    {
-        // Clear old children
-        foreach (Transform child in gridParent)
+        private RectTransform CreateGrid(string name, RectTransform parent, Vector2 topOffset, int rows)
         {
-            Destroy(child.gameObject);
-        }
-        slotUIList.Clear();
+            RectTransform grid = UiBuilder.Rect(name, parent);
+            float width = Columns * SlotSize + (Columns - 1) * Spacing;
+            float height = rows * SlotSize + (rows - 1) * Spacing;
+            UiBuilder.Place(grid, new Vector2(0.5f, 1), new Vector2(0.5f, 1), topOffset, new Vector2(width, height));
 
-        // Instantiate slots based on max inventory capacity
-        for (int i = 0; i < playerInventory.maxSlots; i++)
-        {
-            GameObject slotObj = Instantiate(slotPrefab, gridParent);
-            ItemSlotUI slotUI = slotObj.GetComponent<ItemSlotUI>();
-            slotUI.ClearSlot();
-            slotUIList.Add(slotUI);
+            var layout = grid.gameObject.AddComponent<GridLayoutGroup>();
+            layout.cellSize = new Vector2(SlotSize, SlotSize);
+            layout.spacing = new Vector2(Spacing, Spacing);
+            layout.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+            layout.constraintCount = Columns;
+
+            return grid;
         }
 
-        RefreshUI();
-    }
-
-    public void RefreshUI()
-    {
-        for (int i = 0; i < slotUIList.Count; i++)
+        private void AddSlot(RectTransform parent, int index)
         {
-            if (i < playerInventory.items.Count)
+            ItemSlotUI slot = ItemSlotUI.Create(parent, index, SlotSize, interactive: true);
+            slot.Clicked += OnSlotClicked;
+            slot.HoverChanged += OnSlotHover;
+            _slots.Add(slot);
+        }
+
+        private void OnSlotClicked(ItemSlotUI slot, PointerEventData eventData)
+        {
+            InventoryContainer container = _inventory.Container;
+            int index = slot.SlotIndex;
+            Keyboard keyboard = Keyboard.current;
+            bool shift = keyboard != null && keyboard.shiftKey.isPressed;
+
+            if (eventData.button == PointerEventData.InputButton.Left)
             {
-                slotUIList[i].SetItem(playerInventory.items[i]);
+                if (shift && _held.IsEmpty)
+                    container.QuickMove(index);
+                else
+                    _held = container.PlaceOrSwap(index, _held);
             }
-            else
+            else if (eventData.button == PointerEventData.InputButton.Right)
             {
-                slotUIList[i].ClearSlot();
+                _held = _held.IsEmpty
+                    ? container.TakeHalf(index)
+                    : container.PlaceOne(index, _held);
             }
+
+            Refresh();
+            OnSlotHover(slot);
+        }
+
+        private void OnSlotHover(ItemSlotUI slot)
+        {
+            if (_tooltip == null)
+                return;
+
+            ItemStack stack = slot.IsHovered ? _inventory.Container[slot.SlotIndex] : ItemStack.Empty;
+
+            if (stack.IsEmpty || !_held.IsEmpty)
+            {
+                _tooltip.gameObject.SetActive(false);
+                return;
+            }
+
+            string description = stack.Item.description;
+            _tooltipText.text = string.IsNullOrEmpty(description)
+                ? $"<b>{stack.Item.DisplayName}</b>"
+                : $"<b>{stack.Item.DisplayName}</b>\n<size=15><color=#B8BCC6>{description}</color></size>";
+
+            float height = string.IsNullOrEmpty(description) ? 40f : 70f;
+            _tooltip.sizeDelta = new Vector2(260f, height);
+            _tooltip.gameObject.SetActive(true);
+            _tooltip.SetAsLastSibling();
+        }
+
+        private void Refresh()
+        {
+            if (_inventory == null || _inventory.Container == null)
+                return;
+
+            foreach (ItemSlotUI slot in _slots)
+                slot.SetStack(_inventory.Container[slot.SlotIndex]);
+
+            if (_heldIcon != null)
+            {
+                _heldIcon.enabled = !_held.IsEmpty;
+
+                if (!_held.IsEmpty)
+                {
+                    _heldIcon.sprite = ItemIcons.Get(_held.Item);
+                    _heldCount.text = _held.Count > 1 ? _held.Count.ToString() : string.Empty;
+                    _heldIcon.transform.SetAsLastSibling();
+                }
+                else
+                {
+                    _heldCount.text = string.Empty;
+                }
+            }
+        }
+
+        /// <summary>Puts the stack on the cursor back into the inventory.</summary>
+        private void ReturnHeldStack()
+        {
+            if (_held.IsEmpty)
+                return;
+
+            int leftover = _inventory.Container.Add(_held.Item, _held.Count);
+
+            if (leftover > 0)
+                Debug.LogWarning($"Inventory full, {leftover}x {_held.Item.DisplayName} was lost.");
+
+            _held = ItemStack.Empty;
+        }
+
+        private void FollowMouse(RectTransform rect, Vector2 offset)
+        {
+            Mouse mouse = Mouse.current;
+
+            if (mouse == null || rect == null)
+                return;
+
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                _canvasRect,
+                mouse.position.ReadValue(),
+                null,
+                out Vector2 local);
+
+            rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = local + offset;
         }
     }
 }

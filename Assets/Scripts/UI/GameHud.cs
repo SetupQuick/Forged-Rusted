@@ -1,0 +1,280 @@
+using System.Collections.Generic;
+using Items;
+using Networking;
+using TMPro;
+using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.InputSystem.UI;
+using UnityEngine.UI;
+
+namespace GameUI
+{
+    /// <summary>
+    /// In-game HUD for the local player: crosshair, hotbar, selected item
+    /// name, pickup prompt, short messages, underwater tint, and the
+    /// inventory screen.
+    ///
+    /// Created from code by <see cref="PlayerInventory"/> when the local
+    /// player spawns, so scenes need no UI setup.
+    /// </summary>
+    public sealed class GameHud : MonoBehaviour
+    {
+        private const float HotbarSlotSize = 64f;
+        private const float HotbarSpacing = 6f;
+
+        private readonly List<ItemSlotUI> _hotbarSlots = new List<ItemSlotUI>();
+
+        private PlayerInventory _inventory;
+        private CharacterMotor _motor;
+        private InventoryUI _inventoryUI;
+
+        private RectTransform _crosshair;
+        private Image _underwater;
+        private TextMeshProUGUI _itemName;
+        private TextMeshProUGUI _prompt;
+        private TextMeshProUGUI _message;
+        private float _itemNameTimer;
+        private float _messageTimer;
+
+        public static GameHud Instance { get; private set; }
+
+        public InventoryUI Inventory => _inventoryUI;
+
+        /// <summary>Creates the HUD for a player's inventory if it does not exist yet.</summary>
+        public static GameHud EnsureFor(PlayerInventory inventory)
+        {
+            if (Instance != null)
+            {
+                if (Instance._inventory == inventory)
+                    return Instance;
+
+                // A new local player (respawn/reconnect): rebuild cleanly.
+                Destroy(Instance.gameObject);
+                Instance = null;
+            }
+
+            EnsureEventSystem();
+
+            var go = new GameObject("Game HUD", typeof(RectTransform));
+            go.layer = 5;
+
+            var canvas = go.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 10;
+
+            var scaler = go.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920, 1080);
+            scaler.matchWidthOrHeight = 0.5f;
+
+            go.AddComponent<GraphicRaycaster>();
+
+            var hud = go.AddComponent<GameHud>();
+            hud.Build((RectTransform)go.transform);
+            hud.Bind(inventory);
+
+            return hud;
+        }
+
+        private void Awake()
+        {
+            Instance = this;
+        }
+
+        private void OnDestroy()
+        {
+            if (Instance == this)
+                Instance = null;
+
+            Unbind();
+        }
+
+        public void ShowMessage(string text, float seconds = 2.5f)
+        {
+            if (_message == null)
+                return;
+
+            _message.text = text;
+            _messageTimer = seconds;
+        }
+
+        private void Build(RectTransform root)
+        {
+            // Underwater tint, behind everything else.
+            _underwater = UiBuilder.Image("Underwater", root, new Color(0.12f, 0.32f, 0.62f, 0.38f));
+            UiBuilder.Stretch(_underwater.rectTransform);
+            _underwater.enabled = false;
+
+            // Crosshair.
+            _crosshair = UiBuilder.Rect("Crosshair", root);
+            UiBuilder.Place(_crosshair, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(24, 24));
+
+            Image horizontal = UiBuilder.Image("H", _crosshair, new Color(1, 1, 1, 0.9f));
+            UiBuilder.Place(horizontal.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(22, 3));
+            UiBuilder.AddOutline(horizontal, new Color(0, 0, 0, 0.5f), 1f);
+
+            Image vertical = UiBuilder.Image("V", _crosshair, new Color(1, 1, 1, 0.9f));
+            UiBuilder.Place(vertical.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(3, 22));
+            UiBuilder.AddOutline(vertical, new Color(0, 0, 0, 0.5f), 1f);
+
+            // Pickup prompt under the crosshair.
+            _prompt = UiBuilder.Text("Prompt", root, 24, TextAlignmentOptions.Center, UiBuilder.TextColor);
+            UiBuilder.Place(_prompt.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 1f), new Vector2(0, -40), new Vector2(800, 40));
+            UiBuilder.AddOutline(_prompt, new Color(0, 0, 0, 0.7f), 1.5f);
+
+            // Messages (e.g. "Inventory is full").
+            _message = UiBuilder.Text("Message", root, 26, TextAlignmentOptions.Center, UiBuilder.AccentColor);
+            UiBuilder.Place(_message.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0f), new Vector2(0, 120), new Vector2(900, 40));
+            UiBuilder.AddOutline(_message, new Color(0, 0, 0, 0.7f), 1.5f);
+
+            // Name of the selected item above the hotbar.
+            _itemName = UiBuilder.Text("Item Name", root, 24, TextAlignmentOptions.Center, UiBuilder.TextColor);
+            UiBuilder.Place(_itemName.rectTransform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0, 112), new Vector2(600, 34));
+            UiBuilder.AddOutline(_itemName, new Color(0, 0, 0, 0.7f), 1.5f);
+
+            // Controls hint.
+            TextMeshProUGUI hint = UiBuilder.Text("Hint", root, 16, TextAlignmentOptions.BottomLeft, new Color(1, 1, 1, 0.55f));
+            UiBuilder.Place(hint.rectTransform, new Vector2(0, 0), new Vector2(0, 0), new Vector2(16, 12), new Vector2(700, 24));
+            hint.text = "Tab inventory   1-9 / wheel hotbar   E pick up   Space swim up   Ctrl/C dive";
+        }
+
+        private void Bind(PlayerInventory inventory)
+        {
+            _inventory = inventory;
+            _motor = inventory.GetComponent<CharacterMotor>();
+
+            var root = (RectTransform)transform;
+            BuildHotbar(root);
+
+            _inventoryUI = gameObject.GetComponent<InventoryUI>();
+            if (_inventoryUI == null)
+                _inventoryUI = gameObject.AddComponent<InventoryUI>();
+
+            _inventoryUI.Build(inventory, root);
+
+            inventory.Container.Changed += RefreshHotbar;
+            inventory.SelectedSlotChanged += OnSelectedSlotChanged;
+
+            RefreshHotbar();
+            OnSelectedSlotChanged(inventory.SelectedSlot);
+        }
+
+        private void Unbind()
+        {
+            if (_inventory == null)
+                return;
+
+            if (_inventory.Container != null)
+                _inventory.Container.Changed -= RefreshHotbar;
+
+            _inventory.SelectedSlotChanged -= OnSelectedSlotChanged;
+            _inventory = null;
+        }
+
+        private void BuildHotbar(RectTransform root)
+        {
+            foreach (ItemSlotUI slot in _hotbarSlots)
+            {
+                if (slot != null)
+                    Destroy(slot.transform.parent.gameObject);
+            }
+
+            _hotbarSlots.Clear();
+
+            int count = _inventory.Container.HotbarSize;
+            float width = count * HotbarSlotSize + (count - 1) * HotbarSpacing;
+
+            Image bar = UiBuilder.Image("Hotbar", root, UiBuilder.PanelColor);
+            UiBuilder.Place(bar.rectTransform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0, 20), new Vector2(width + 16, HotbarSlotSize + 16));
+
+            var layout = bar.gameObject.AddComponent<HorizontalLayoutGroup>();
+            layout.spacing = HotbarSpacing;
+            layout.padding = new RectOffset(8, 8, 8, 8);
+            layout.childAlignment = TextAnchor.MiddleCenter;
+            layout.childControlWidth = false;
+            layout.childControlHeight = false;
+            layout.childForceExpandWidth = false;
+            layout.childForceExpandHeight = false;
+
+            for (int i = 0; i < count; i++)
+            {
+                ItemSlotUI slot = ItemSlotUI.Create(bar.rectTransform, i, HotbarSlotSize, interactive: false);
+
+                TextMeshProUGUI number = UiBuilder.Text("Key", slot.transform, 14, TextAlignmentOptions.TopLeft, new Color(1, 1, 1, 0.5f));
+                UiBuilder.Stretch(number.rectTransform);
+                number.rectTransform.offsetMin = new Vector2(5, 2);
+                number.rectTransform.offsetMax = new Vector2(-2, -3);
+                number.text = (i + 1).ToString();
+
+                _hotbarSlots.Add(slot);
+            }
+        }
+
+        private void RefreshHotbar()
+        {
+            if (_inventory == null)
+                return;
+
+            for (int i = 0; i < _hotbarSlots.Count; i++)
+                _hotbarSlots[i].SetStack(_inventory.Container[i]);
+
+            ShowSelectedName();
+        }
+
+        private void OnSelectedSlotChanged(int index)
+        {
+            for (int i = 0; i < _hotbarSlots.Count; i++)
+                _hotbarSlots[i].SetSelected(i == index);
+
+            ShowSelectedName();
+        }
+
+        private void ShowSelectedName()
+        {
+            ItemStack stack = _inventory.SelectedStack;
+            string text = stack.IsEmpty ? string.Empty : stack.Item.DisplayName;
+
+            if (_itemName.text != text)
+            {
+                _itemName.text = text;
+                _itemNameTimer = 2f;
+            }
+        }
+
+        private void Update()
+        {
+            if (_inventory == null)
+            {
+                // The local player despawned; hide gameplay UI.
+                _crosshair.gameObject.SetActive(false);
+                return;
+            }
+
+            bool inventoryOpen = _inventoryUI != null && _inventoryUI.IsOpen;
+
+            _crosshair.gameObject.SetActive(!inventoryOpen);
+            _underwater.enabled = _motor != null && _motor.IsHeadUnderwater;
+
+            PickupItem target = _inventory.PickupTarget;
+            _prompt.text = target != null && !inventoryOpen
+                ? $"[E] Pick up {target.itemData.DisplayName}" + (target.amount > 1 ? $" x{target.amount}" : string.Empty)
+                : string.Empty;
+
+            _itemNameTimer -= Time.unscaledDeltaTime;
+            _itemName.alpha = Mathf.Clamp01(_itemNameTimer / 0.5f);
+
+            _messageTimer -= Time.unscaledDeltaTime;
+            _message.alpha = Mathf.Clamp01(_messageTimer / 0.5f);
+        }
+
+        private static void EnsureEventSystem()
+        {
+            if (EventSystem.current != null || FindFirstObjectByType<EventSystem>() != null)
+                return;
+
+            var go = new GameObject("EventSystem");
+            go.AddComponent<EventSystem>();
+            go.AddComponent<InputSystemUIInputModule>();
+        }
+    }
+}

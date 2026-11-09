@@ -100,7 +100,7 @@ namespace World.Rendering
         private const float WaterSurfaceDrop = 0.12f;
 
         // AO brightness by number of occluders (0..3).
-        private static readonly float[] AoCurve = { 1.0f, 0.82f, 0.68f, 0.55f };
+        private static readonly float[] AoCurve = { 1.0f, 0.84f, 0.71f, 0.58f };
 
         private enum Face
         {
@@ -169,13 +169,19 @@ namespace World.Rendering
                 BlockDefinition definition = BlockRegistry.Get(block);
                 BiomeDefinition biome = BiomeRegistry.Get((BiomeId)chunk.GetBiome(x, z));
 
-                // One brightness wobble per block gives the flat-shaded
-                // voxel look some texture.
-                float variation = 1f;
+                // Per-block brightness wobble plus a slight colour shift
+                // gives the untextured voxels a hand-painted look.
+                Vector3 variation = new Vector3(1f, 1f, 1f);
                 if (definition.ColorNoise > 0)
                 {
-                    double h = SeedHash.ToUnit(SeedHash.Hash(seed, originX + x, y, originZ + z, 0x5EED));
-                    variation = 1f + (float)(h * 2 - 1) * definition.ColorNoise;
+                    ulong hash = SeedHash.Hash(seed, originX + x, y, originZ + z, 0x5EED);
+                    float brightness = 1f + (float)(SeedHash.ToUnit(hash) * 2 - 1) * definition.ColorNoise;
+                    float shift = definition.ColorNoise * 0.35f;
+
+                    variation = new Vector3(
+                        brightness * (1f + (((hash >> 8) & 0xFF) / 255f * 2f - 1f) * shift),
+                        brightness * (1f + (((hash >> 16) & 0xFF) / 255f * 2f - 1f) * shift),
+                        brightness * (1f + (((hash >> 24) & 0xFF) / 255f * 2f - 1f) * shift));
                 }
 
                 for (int f = 0; f < 6; f++)
@@ -194,7 +200,7 @@ namespace World.Rendering
             return result;
         }
 
-        private static Color32 FaceColor(BlockDefinition definition, BiomeDefinition biome, Face face, float variation)
+        private static Color32 FaceColor(BlockDefinition definition, BiomeDefinition biome, Face face, Vector3 variation)
         {
             BlockColor baseColor =
                 face == Face.Up ? definition.TopColor :
@@ -220,9 +226,9 @@ namespace World.Rendering
             }
 
             return new Color32(
-                ClampByte(r * variation),
-                ClampByte(g * variation),
-                ClampByte(b * variation),
+                ClampByte(r * variation.x),
+                ClampByte(g * variation.y),
+                ClampByte(b * variation.z),
                 255);
         }
 

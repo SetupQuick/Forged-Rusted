@@ -56,8 +56,10 @@ namespace World
         [Min(1)]
         private int maxMeshUploadsPerFrame = 4;
 
-        [Tooltip("Background generation/meshing jobs running at once. " +
-                 "0 = number of CPU cores - 1.")]
+        [Tooltip("Background generation/meshing jobs queued at once. " +
+                 "0 = automatic (2 x CPU cores). The thread pool still " +
+                 "runs only as many as there are cores; the extra ones " +
+                 "keep it busy between frames.")]
         [SerializeField]
         [Min(0)]
         private int maxConcurrentJobs;
@@ -125,8 +127,13 @@ namespace World
         /// <summary>Raised whenever a world (re)initialises with a seed.</summary>
         public event Action<WorldManager> WorldReady;
 
+        /// <summary>The world in the current scene (there is one per scene).</summary>
+        public static WorldManager Active { get; private set; }
+
         private void Awake()
         {
+            Active = this;
+
             if (settings == null)
             {
                 throw new InvalidOperationException(
@@ -140,7 +147,7 @@ namespace World
                 waterMaterial = Resources.Load<Material>("World/WaterMaterial");
 
             if (maxConcurrentJobs <= 0)
-                maxConcurrentJobs = Mathf.Clamp(SystemInfo.processorCount - 1, 1, 8);
+                maxConcurrentJobs = Mathf.Clamp(SystemInfo.processorCount * 2, 4, 16);
         }
 
         private void Start()
@@ -150,6 +157,9 @@ namespace World
 
         private void OnDestroy()
         {
+            if (Active == this)
+                Active = null;
+
             UnsubscribeFromRuntime();
 
             // Results of jobs still running are ignored.
@@ -519,6 +529,36 @@ namespace World
             out ChunkData chunk)
         {
             return _chunks.TryGetValue(coord, out chunk);
+        }
+
+        /// <summary>
+        /// Block at a position if its chunk is loaded; never generates.
+        /// Unloaded chunks report <paramref name="block"/> = Air and
+        /// return false. Cheap enough for per-tick physics queries.
+        /// </summary>
+        public bool TryGetLoadedBlock(
+            int worldX,
+            int worldY,
+            int worldZ,
+            out BlockId block)
+        {
+            block = BlockId.Air;
+
+            if (!IsReady ||
+                worldY < 0 ||
+                worldY >= Config.WorldHeight)
+            {
+                return IsReady;
+            }
+
+            ChunkCoord coord = WorldToChunkCoord(worldX, worldZ);
+
+            if (!_chunks.TryGetValue(coord, out ChunkData chunk))
+                return false;
+
+            WorldToLocalPosition(worldX, worldZ, coord, out int localX, out int localZ);
+            block = chunk.GetBlock(localX, worldY, localZ);
+            return true;
         }
 
         public BlockId GetBlock(

@@ -44,7 +44,15 @@ namespace Networking
         private int _jumpSendTicks;
         private bool _active;
 
+        private bool _appliedBlocked;
+
         public bool IsActive => _active;
+
+        /// <summary>
+        /// While true (e.g. the inventory is open) the local player does
+        /// not move or look around, and the mouse cursor is free.
+        /// </summary>
+        public static bool GameplayInputBlocked { get; set; }
 
         private void Awake()
         {
@@ -167,7 +175,7 @@ namespace Networking
             uint networkId,
             uint inputSequence)
         {
-            if (!_active)
+            if (!_active || GameplayInputBlocked)
             {
                 return new PlayerInputMessage(
                     networkId,
@@ -186,6 +194,12 @@ namespace Networking
                     PlayerInputButtons.Jump;
 
                 _jumpSendTicks--;
+            }
+
+            if (_jumpAction.IsPressed())
+            {
+                buttons |=
+                    PlayerInputButtons.JumpHeld;
             }
 
             if (_sprintAction.IsPressed())
@@ -211,6 +225,11 @@ namespace Networking
         private void Update()
         {
             if (!_active)
+                return;
+
+            ApplyCursorState();
+
+            if (GameplayInputBlocked)
                 return;
 
             if (_jumpAction.WasPressedThisFrame())
@@ -242,6 +261,24 @@ namespace Networking
 
             // Pitch affects only the camera target.
             cameraRig.SetPitch(_pitch);
+        }
+
+        private void ApplyCursorState()
+        {
+            if (!lockCursor ||
+                _appliedBlocked == GameplayInputBlocked)
+            {
+                return;
+            }
+
+            _appliedBlocked = GameplayInputBlocked;
+
+            Cursor.lockState =
+                _appliedBlocked
+                    ? CursorLockMode.None
+                    : CursorLockMode.Locked;
+
+            Cursor.visible = _appliedBlocked;
         }
 
         private void OnDestroy()

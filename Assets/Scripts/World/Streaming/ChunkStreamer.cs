@@ -47,6 +47,22 @@ namespace World.Streaming
         [Min(1)]
         private int serverSimulationDistance = 2;
 
+        [Header("Atmosphere")]
+        [Tooltip("Fade distant terrain into fog that ends at the render " +
+                 "distance, so chunks appear softly instead of popping in.")]
+        [SerializeField]
+        private bool distanceFog = true;
+
+        [SerializeField]
+        private Color fogColor = new Color(0.70f, 0.80f, 0.92f, 1f);
+
+        [Tooltip("Where fog starts, as a fraction of the render distance.")]
+        [SerializeField]
+        [Range(0f, 0.95f)]
+        private float fogStart = 0.55f;
+
+        private int _appliedFogDistance = -1;
+
         private readonly List<Target> _targets = new List<Target>();
         private readonly List<Target> _previousTargets = new List<Target>();
 
@@ -78,6 +94,8 @@ namespace World.Streaming
             if (worldManager == null || !worldManager.IsReady)
                 return;
 
+            ApplyFog();
+
             CollectTargets();
 
             if (_targets.Count == 0)
@@ -90,6 +108,35 @@ namespace World.Streaming
                 return;
 
             RebuildWantedChunks();
+        }
+
+        /// <summary>Visible radius in blocks for the local player.</summary>
+        public float RenderDistanceBlocks =>
+            renderDistance * (worldManager != null && worldManager.Config != null
+                ? worldManager.Config.ChunkSize
+                : 16);
+
+        private void ApplyFog()
+        {
+            NetworkRuntime runtime = NetworkRuntime.Current;
+
+            // Only machines that render (not a dedicated server).
+            if (!distanceFog ||
+                (runtime != null && runtime.IsRunning && !runtime.RunsClient) ||
+                _appliedFogDistance == renderDistance)
+            {
+                return;
+            }
+
+            _appliedFogDistance = renderDistance;
+
+            float end = RenderDistanceBlocks * 0.95f;
+
+            RenderSettings.fog = true;
+            RenderSettings.fogMode = FogMode.Linear;
+            RenderSettings.fogColor = fogColor;
+            RenderSettings.fogStartDistance = end * fogStart;
+            RenderSettings.fogEndDistance = end;
         }
 
         private void CollectTargets()

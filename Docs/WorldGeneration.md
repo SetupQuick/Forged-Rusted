@@ -80,6 +80,11 @@ constructor (`extraStructures`). Rules:
   dry, flat spawn spot and builds the terrain around it first.
 * Chunk data is kept two rings beyond the visible area and unloaded
   further out, except chunks a player modified (kept until saving exists).
+* Distance fog ends at the render distance, so new chunks fade in instead
+  of popping in (`ChunkStreamer` > Atmosphere).
+* Measured outside Unity on 4 cores: the full render distance (225
+  chunks) loads in about 1.3 s, nearest chunks first; the chunk under the
+  player is ready on the first frame.
 
 ## Rendering
 
@@ -106,6 +111,5 @@ change; that is the next step.
 
 * Placing/breaking blocks over the network (RPC + validation).
 * Saving/loading modified chunks.
-* Swimming (water has no collider, so players sink to the bottom).
 * Dungeons and other big structures (the hook above is ready).
 * Lava, flowers/tall grass and other non-cube blocks.
