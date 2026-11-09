@@ -70,7 +70,7 @@ namespace World.Rendering
                 FillHiddenCaves(chunks[4]);
 
             ChunkMeshResult result = ChunkMeshBuilder.Build(
-                new ChunkNeighborhood(chunks), buildLiquid, seed, voxelSize * 2f, includeDetail: false);
+                new ChunkNeighborhood(chunks), buildLiquid, seed, voxelSize * 2f, includeDetail: false, buildCollision: false);
 
             result.SourceVersion = full.CombinedVersion;
             result.Lod = 1;

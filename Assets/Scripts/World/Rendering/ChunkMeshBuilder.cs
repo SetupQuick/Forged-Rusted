@@ -125,7 +125,8 @@ namespace World.Rendering
             Return(result.Solid);
             Return(result.Liquid);
             Return(result.Detail);
-            result.Solid = result.Liquid = result.Detail = null;
+            Return(result.Collision);
+            result.Solid = result.Liquid = result.Detail = result.Collision = null;
         }
     }
 
@@ -138,11 +139,20 @@ namespace World.Rendering
         /// <summary>Grass tufts and flowers: rendered, no collider.</summary>
         public ChunkMeshData Detail;
 
+        /// <summary>
+        /// Collider surface with merged faces (vertices + triangles only).
+        /// null = use the visual mesh / no collider.
+        /// </summary>
+        public ChunkMeshData Collision;
+
         /// <summary>Built with grass/flowers (near the player).</summary>
         public bool HasDetail;
 
         /// <summary>0 = full detail, 1 = half resolution for distant chunks (no collider).</summary>
         public int Lod;
+
+        /// <summary>Has visual meshes (false = collision only, like a dedicated server builds).</summary>
+        public bool Visual;
         public long SourceVersion;
     }
 
@@ -193,11 +203,31 @@ namespace World.Rendering
             new[] { new Vector3Int(1, 0, 0), new Vector3Int(0, 0, 0), new Vector3Int(0, 1, 0), new Vector3Int(1, 1, 0) }
         };
 
-        /// <param name="buildLiquid">Water and grass meshes (not needed on a dedicated server).</param>
+        /// <param name="buildLiquid">
+        /// true on machines that render: visual meshes (blocks, water,
+        /// grass). false on a dedicated server: only the collision mesh.
+        /// </param>
         /// <param name="includeDetail">Grass tufts and flowers; off for distant chunks.</param>
-        public static ChunkMeshResult Build(ChunkNeighborhood neighborhood, bool buildLiquid, long seed, float voxelSize = 1f, bool includeDetail = true)
+        /// <param name="buildCollision">Merged collision-only mesh (off for distant chunks).</param>
+        public static ChunkMeshResult Build(ChunkNeighborhood neighborhood, bool buildLiquid, long seed, float voxelSize = 1f, bool includeDetail = true, bool buildCollision = true)
         {
             ChunkData chunk = neighborhood.Center;
+
+            if (!buildLiquid)
+            {
+                // Dedicated server: nobody looks at it, physics needs only
+                // the collision surface.
+                var serverResult = new ChunkMeshResult
+                {
+                    Coord = chunk.Coord,
+                    Solid = ChunkMeshData.Rent(),
+                    Collision = ChunkMeshData.Rent(),
+                    SourceVersion = neighborhood.CombinedVersion
+                };
+
+                CollisionMeshBuilder.Build(neighborhood, serverResult.Collision, voxelSize);
+                return serverResult;
+            }
 
             var result = new ChunkMeshResult
             {
@@ -206,7 +236,8 @@ namespace World.Rendering
                 Liquid = buildLiquid ? ChunkMeshData.Rent() : null,
                 Detail = buildLiquid && includeDetail ? ChunkMeshData.Rent() : null,
                 HasDetail = buildLiquid && includeDetail,
-                SourceVersion = neighborhood.CombinedVersion
+                SourceVersion = neighborhood.CombinedVersion,
+                Visual = true
             };
 
             int maxY = chunk.HighestBlockY;
@@ -275,6 +306,12 @@ namespace World.Rendering
                 Scale(result.Solid, voxelSize);
                 Scale(result.Liquid, voxelSize);
                 Scale(result.Detail, voxelSize);
+            }
+
+            if (buildCollision)
+            {
+                result.Collision = ChunkMeshData.Rent();
+                CollisionMeshBuilder.Build(neighborhood, result.Collision, voxelSize);
             }
 
             return result;

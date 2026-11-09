@@ -45,6 +45,12 @@ namespace World.Rendering
         /// <summary>0 = full detail, 1 = simplified distant mesh (no collider).</summary>
         public int Lod { get; private set; }
 
+        /// <summary>False for chunks that only exist for physics (around far-away players on a host).</summary>
+        public bool HasVisual { get; private set; }
+
+        /// <summary>The current mesh came with a collider (chunks far from players have none).</summary>
+        public bool HasCollision { get; private set; }
+
         /// <summary>The current mesh includes grass and flowers.</summary>
         public bool HasDetail { get; private set; }
 
@@ -110,37 +116,58 @@ namespace World.Rendering
         {
             BuiltFromVersion = result.SourceVersion;
             Lod = result.Lod;
+            HasVisual = result.Visual;
 
             Mesh previous = _mesh;
             _mesh = CreateMesh(result.Solid, result.Lod > 0 ? "Solid_LOD1" : "Solid");
             _meshFilter.sharedMesh = _mesh;
 
-            if (result.Lod > 0)
+            // The collider uses the merged collision-only mesh when there
+            // is one (far fewer triangles to cook and to collide with).
+            Mesh collision = null;
+            HasCollision = result.Lod == 0 && result.Collision != null;
+
+            if (HasCollision)
             {
-                // Nobody stands on a distant chunk; it gets a full-detail
-                // mesh and collider again before anyone comes close. This
-                // also saves the collider cooking for most of the world.
+                collision = CreateCollisionMesh(result.Collision);
+
+                if (collision.vertexCount == 0)
+                {
+                    if (collision != _mesh)
+                        Destroy(collision);
+                    collision = null;
+                }
+            }
+
+            if (collision == null)
+            {
+                // No player near (simplified distant chunks, or full-detail
+                // chunks a few chunks away): it gets a collider before
+                // anyone comes close. Or there is nothing solid at all.
                 RetireBaking();
                 SetCollider(null);
             }
-            else if (_mesh.vertexCount == 0 || colliderImmediately)
+            else if (colliderImmediately)
             {
                 // Cook now on the main thread.
-                SetCollider(_mesh.vertexCount == 0 ? null : _mesh);
+                SetCollider(collision);
                 RetireBaking();
             }
             else
             {
                 // Cook in the background; keep the old collider meanwhile.
                 RetireBaking();
-                _bakingMesh = _mesh;
-                int meshId = _mesh.GetInstanceID();
+                _bakingMesh = collision;
+                int meshId = collision.GetInstanceID();
                 _bakeTask = Task.Run(() => Physics.BakeMesh(meshId, false));
             }
 
             Release(previous, null);
 
-            UploadChild(_liquid, result.Liquid, "Water");
+            if (result.Visual)
+                UploadChild(_liquid, result.Liquid, "Water");
+            else
+                ClearChild(_liquid);
 
             if (result.HasDetail)
                 UploadChild(_detail, result.Detail, "Details");
@@ -160,6 +187,17 @@ namespace World.Rendering
 
             if (_detail.Object.activeSelf != show)
                 _detail.Object.SetActive(show);
+        }
+
+        /// <summary>Removes the collider of a chunk no player is near (cheaper physics, less memory).</summary>
+        public void DropCollider()
+        {
+            if (!HasCollision)
+                return;
+
+            HasCollision = false;
+            RetireBaking();
+            SetCollider(null);
         }
 
         /// <summary>Frees the grass/flower mesh of a chunk that is now far away.</summary>
@@ -263,6 +301,30 @@ namespace World.Rendering
             child.Mesh = CreateMesh(data, suffix, keepReadable: false);
             child.Filter.sharedMesh = child.Mesh;
             child.Object.SetActive(child.Mesh.vertexCount > 0);
+        }
+
+        private void ClearChild(Child child)
+        {
+            if (child == null || child.Mesh == null)
+                return;
+
+            Destroy(child.Mesh);
+            child.Mesh = null;
+            child.Filter.sharedMesh = null;
+            child.Object.SetActive(false);
+        }
+
+        private Mesh CreateCollisionMesh(ChunkMeshData data)
+        {
+            var mesh = new Mesh { name = $"Chunk_{Coord.X}_{Coord.Z}_Collision" };
+
+            if (data.IsEmpty)
+                return mesh;
+
+            mesh.indexFormat = data.Vertices.Count > 65535 ? IndexFormat.UInt32 : IndexFormat.UInt16;
+            mesh.SetVertices(data.Vertices);
+            mesh.SetTriangles(data.Triangles, 0, true);
+            return mesh;
         }
 
         private Mesh CreateMesh(ChunkMeshData data, string suffix, bool keepReadable = true)

@@ -85,6 +85,13 @@ namespace World
         [Range(0, 32)]
         private int lodDistance = 6;
 
+        [Tooltip("On machines that render: only chunks this close to the " +
+                 "camera or to a player get a collider. Further chunks are " +
+                 "only drawn (saves collider cooking and physics memory).")]
+        [SerializeField]
+        [Range(1, 16)]
+        private int colliderRadius = 3;
+
         private readonly Dictionary<ChunkCoord, ChunkData> _chunks =
             new Dictionary<ChunkCoord, ChunkData>();
 
@@ -158,6 +165,13 @@ namespace World
 
         public int PendingJobCount =>
             _runningJobs;
+
+        /// <summary>
+        /// The local view distance in chunks (set by ChunkStreamer). Chunks
+        /// further away exist only because another player is there (on a
+        /// host): they get a collision mesh but nothing to draw.
+        /// </summary>
+        public int ViewDistance { get; set; } = 64;
 
         /// <summary>Chunks beyond this distance use the simplified mesh (0 = never).</summary>
         public int LodDistance
@@ -370,10 +384,18 @@ namespace World
 
                 // Simplified meshes far away, with one chunk of hysteresis
                 // so walking back and forth does not rebuild the same row.
-                if (view.Lod > 0 && !WantsLod(pair.Key, hysteresis: -1))
-                    _dirty.Add(pair.Key);
+                if (!view.HasVisual && WantsVisual(pair.Key))
+                    _dirty.Add(pair.Key);           // now in view: build what is drawn
+                else if (view.HasVisual && DetailDistance(pair.Key) > ViewDistance + 2)
+                    _dirty.Add(pair.Key);           // only kept for another player: physics only
+                else if (view.Lod > 0 && !WantsLod(pair.Key, hysteresis: -1))
+                    _dirty.Add(pair.Key);           // came close: full detail
                 else if (view.Lod == 0 && WantsLod(pair.Key, hysteresis: 1))
-                    _dirty.Add(pair.Key);
+                    _dirty.Add(pair.Key);           // far away now: simplified
+                else if (view.Lod == 0 && !view.HasCollision && WantsCollision(pair.Key))
+                    _dirty.Add(pair.Key);           // needs a collider again
+                else if (view.HasCollision && DetailDistance(pair.Key) > colliderRadius + 1 && !NearCollisionCenter(pair.Key))
+                    view.DropCollider();            // nobody near: no physics needed
             }
         }
 
@@ -390,6 +412,18 @@ namespace World
                 return false;
 
             return !NearCollisionCenter(coord);
+        }
+
+        private bool WantsVisual(ChunkCoord coord) =>
+            _renderingEnabled && (!_detailCenterKnown || DetailDistance(coord) <= ViewDistance + 1);
+
+        /// <summary>Servers: always. Clients: near the camera or near a player.</summary>
+        private bool WantsCollision(ChunkCoord coord)
+        {
+            if (!_renderingEnabled || !_detailCenterKnown)
+                return true;
+
+            return DetailDistance(coord) <= colliderRadius || NearCollisionCenter(coord);
         }
 
         private bool NearCollisionCenter(ChunkCoord coord)
@@ -656,6 +690,7 @@ namespace World
             if (_views.TryGetValue(coord, out ChunkView existing) &&
                 existing != null &&
                 existing.Lod == 0 &&
+                existing.HasCollision &&
                 !_dirty.Contains(coord))
             {
                 existing.EnsureColliderNow();
@@ -667,7 +702,8 @@ namespace World
                 GetOrCreateChunk(new ChunkCoord(coord.X + dx, coord.Z + dz));
 
             ChunkNeighborhood neighbourhood = CollectNeighbourhood(coord);
-            ChunkMeshResult result = ChunkMeshBuilder.Build(neighbourhood, _renderingEnabled, Seed, VoxelSize, WantsDetail(coord));
+            // Always with a collider: this is the path for chunks players need now.
+            ChunkMeshResult result = ChunkMeshBuilder.Build(neighbourhood, WantsVisual(coord), Seed, VoxelSize, WantsDetail(coord), buildCollision: true);
 
             ApplyMesh(result, colliderImmediately: true);
             ChunkMeshData.Return(result);
@@ -698,9 +734,9 @@ namespace World
 
                 bool adjacent = Math.Abs(dx) <= 1 && Math.Abs(dz) <= 1;
 
-                if (view.Lod > 0)
+                if (view.Lod > 0 || !view.HasCollision)
                 {
-                    // A simplified distant chunk has no collider. Next to
+                    // A simplified or far chunk has no collider. Next to
                     // the player it is rebuilt right now; one further out
                     // in the background (it is usually done before needed).
                     if (adjacent)
@@ -831,6 +867,7 @@ namespace World
 
             ChunkData chunk = CreateChunkData(coord);
             _generator.GenerateChunk(chunk);
+            chunk.Compact();
             PublishChunk(chunk);
 
             return chunk;
@@ -1157,6 +1194,7 @@ namespace World
                 try
                 {
                     generator.GenerateChunk(chunk);
+                    chunk.Compact(); // ~320 -> ~110 KB
                     result.Chunk = chunk;
                 }
                 catch (Exception exception)
@@ -1175,11 +1213,12 @@ namespace World
             _runningJobs++;
 
             int epoch = _epoch;
-            bool buildLiquid = _renderingEnabled;
+            bool buildLiquid = WantsVisual(coord); // false = collision only
             long seed = Seed;
             float voxelSize = VoxelSize;
             bool includeDetail = WantsDetail(coord);
-            bool lod = WantsLod(coord);
+            bool lod = buildLiquid && WantsLod(coord);
+            bool collision = WantsCollision(coord);
             ChunkNeighborhood neighbourhood = CollectNeighbourhood(coord);
 
             Task.Run(() =>
@@ -1195,7 +1234,7 @@ namespace World
                 {
                     result.Mesh = lod
                         ? ChunkLod.Build(neighbourhood, buildLiquid, seed, voxelSize)
-                        : ChunkMeshBuilder.Build(neighbourhood, buildLiquid, seed, voxelSize, includeDetail);
+                        : ChunkMeshBuilder.Build(neighbourhood, buildLiquid, seed, voxelSize, includeDetail, collision);
                 }
                 catch (Exception exception)
                 {
@@ -1256,7 +1295,9 @@ namespace World
                 {
                     _meshing.Remove(result.Coord);
 
-                    if (result.Mesh.Lod > 0 && !WantsLod(result.Coord, hysteresis: -1))
+                    if ((result.Mesh.Lod > 0 && !WantsLod(result.Coord, hysteresis: -1)) ||
+                        (!result.Mesh.Visual && WantsVisual(result.Coord)) ||
+                        (result.Mesh.Lod == 0 && result.Mesh.Collision == null && NearCollisionCenter(result.Coord)))
                     {
                         // Built as a distant mesh, but a player or the
                         // camera came close meanwhile: build it again.

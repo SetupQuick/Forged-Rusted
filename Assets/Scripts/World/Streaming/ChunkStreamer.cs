@@ -109,6 +109,7 @@ namespace World.Streaming
                 return;
 
             ApplyFog();
+            worldManager.ViewDistance = renderDistance;
 
             CollectTargets();
 

@@ -140,8 +140,66 @@ it sits inside the fog and is mostly visible through clear water.
 
 Each vertex now carries 8 more bytes (the wind weight), which is why
 small render distances use slightly more; from 8 chunks on, dropping far
-grass saves more than that. Chunk block data in RAM is 320 KB per chunk
-(138 MB at render distance 8) - see "next steps".
+grass saves more than that. Chunk block data in RAM is 110 KB per chunk
+(47 MB at render distance 8, was 138 MB) - see "Multiplayer".
+
+## Multiplayer and many players
+
+Unlike Minecraft, the server never sends terrain: every machine
+generates the same world from the seed, and only player edits, positions
+and inventories travel over the network. So more players cost the
+server CPU and RAM for the areas they stand in, not bandwidth for chunks.
+
+### What the server does per player
+
+* Keeps block data for 9 x 9 chunks around each player (shared when
+  players are close together) and colliders for the 21 nearest.
+* Builds **collision-only meshes**: just the surface between solid and
+  non-solid blocks, with neighbouring faces merged into big rectangles.
+  No colours, normals or visual mesh at all. 2 041 triangles instead of
+  8 750 per chunk, built in 1.9 ms (the visual mesh took ~5 ms), and far
+  cheaper to cook and collide against.
+
+| | before | now |
+|---|---|---|
+| Block data per chunk | 320 KB | **110 KB** |
+| Server RAM per player (exploring alone) | 25 MB | **8.7 MB** |
+| Server CPU per new chunk | ~5 ms mesh + cooking 8 750 triangles | **1.9 ms + cooking 2 041 triangles** |
+| Joining / teleporting | | ~0.4 s CPU once, spread over all cores |
+| Sprinting into new land | | ~2 % of one core per player |
+
+| Players exploring apart | Server RAM for terrain | Server CPU (one core = 100 %) |
+|---|---|---|
+| 4 | 35 MB (was 101) | 7 % |
+| 10 | 87 MB (was 253) | 19 % |
+| 20 | 174 MB (was 506) | 37 % |
+| 50 | 435 MB (was 1 266) | 93 % (spread over cores) |
+
+Players in the same area share chunks, so real numbers are lower.
+
+### What changed for this
+
+* **Chunk storage in 16-block sections**: a section that is one block
+  type (all sky above the terrain, all stone deep down - two thirds of
+  every chunk) is stored as a single value. 320 -> 110 KB per chunk, on
+  clients too (view 8: 138 -> 47 MB). Reading a block costs the same.
+* **Merged collision meshes** (above), on clients too.
+* **Clients only cook colliders near players**: within 3 chunks of the
+  camera or 2 of any player; further chunks are just drawn (colliders
+  are dropped when you walk away, rebuilt before you arrive).
+* **Hosting**: the host also simulates the areas around the other
+  players. Where those are outside the host's own view they now get only
+  collision meshes - nothing is built or drawn for them.
+
+### Bandwidth (not changed yet)
+
+Every player's position is sent to every other player 33 times a
+second, with no distance filtering, so it grows with players squared:
+about 0.9 Mbit/s server upload at 10 players, 3.6 at 20, 23 at 50 (each
+client receives only ~12-60 KB/s). Fine for a group of friends; for
+bigger servers the next step is **interest management** - only send
+players within view distance, and nearby players more often than far
+ones.
 
 ## How heavy are wind and shadows?
 
@@ -200,9 +258,10 @@ globals per frame.
   edit overlay already holds them) per region file, written on a worker
   thread every few minutes and on quit - never the generated terrain,
   which is recreated from the seed. Keeps saves tiny and fast.
-* **Chunk data compression**: 320 KB per chunk in RAM is mostly air and
-  stone. Storing each 32-high section as "all one block" or as a
-  palette with 4-8 bit indices would cut RAM by ~80 %.
+* **Palette compression** of mixed sections (4-bit indices when a
+  section has at most 16 block types): 110 -> ~48 KB per chunk. Costs a
+  little speed on every block read, so only worth it for big servers.
+* **Interest management** for player updates (see Bandwidth).
 * **Vertex compression**: positions as 16-bit, normals as one byte
   index, colours already 8-bit -> ~16 bytes per vertex instead of 36.
   Roughly halves GPU mesh memory and vertex bandwidth.
