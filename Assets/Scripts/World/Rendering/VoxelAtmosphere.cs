@@ -58,7 +58,7 @@ namespace World.Rendering
         private bool configureShadows = true;
 
         [SerializeField]
-        [Min(10f)]
+        [Min(0f)]
         private float shadowDistance = 110f;
 
         [Header("Post-processing")]
@@ -83,6 +83,38 @@ namespace World.Rendering
 
         private Volume _volume;
         private Camera _configuredCamera;
+        private Light _sun;
+
+        /// <summary>Shadow distance in metres; 0 turns sun shadows off (graphics settings).</summary>
+        public void SetShadowDistance(float metres)
+        {
+            shadowDistance = Mathf.Max(0f, metres);
+
+            if (_sun != null)
+                _sun.shadows = shadowDistance > 0f ? LightShadows.Soft : LightShadows.None;
+
+            if (shadowDistance > 0f && configureShadows)
+                ConfigureShadows();
+        }
+
+        /// <summary>Turns bloom, tone mapping and colour grading on or off (graphics settings).</summary>
+        public void SetPostProcessing(bool enabled)
+        {
+            postProcessing = enabled;
+
+            if (enabled)
+                ConfigurePostProcessing();
+
+            if (_volume != null)
+                _volume.enabled = enabled;
+
+            if (Camera.main != null)
+            {
+                UniversalAdditionalCameraData data = Camera.main.GetUniversalAdditionalCameraData();
+                if (data != null)
+                    data.renderPostProcessing = enabled;
+            }
+        }
 
         private void OnEnable()
         {
@@ -161,9 +193,10 @@ namespace World.Rendering
                 RenderSettings.sun = sun;
             }
 
+            _sun = sun;
             sun.color = sunColor;
             sun.intensity = sunIntensity;
-            sun.shadows = LightShadows.Soft;
+            sun.shadows = shadowDistance > 0f ? LightShadows.Soft : LightShadows.None;
             sun.shadowStrength = 0.85f;
             sun.transform.rotation = Quaternion.Euler(sunAngles.x, sunAngles.y, 0f);
         }

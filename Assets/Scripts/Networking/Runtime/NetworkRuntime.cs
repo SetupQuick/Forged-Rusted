@@ -63,6 +63,13 @@ namespace Networking
         private double _previousTime;
         private bool _shuttingDown;
 
+        /// <summary>
+        /// Set before the scene starts (the main menu does this) to keep
+        /// the runtime from starting by itself; StartRuntime is called
+        /// when the player picks Host or Join.
+        /// </summary>
+        public static bool SuppressAutoStart { get; set; }
+
         public static NetworkRuntime Current
         {
             get;
@@ -195,7 +202,8 @@ namespace Networking
         private void Start()
         {
             if (Current != this ||
-                !startAutomatically)
+                !startAutomatically ||
+                SuppressAutoStart)
             {
                 return;
             }
@@ -771,6 +779,7 @@ namespace Networking
         private static void ResetStaticState()
         {
             Current = null;
+            SuppressAutoStart = false;
         }
     }
 }

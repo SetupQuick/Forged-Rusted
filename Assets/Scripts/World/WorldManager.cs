@@ -170,6 +170,33 @@ namespace World
         /// <summary>The world in the current scene (there is one per scene).</summary>
         public static WorldManager Active { get; private set; }
 
+        /// <summary>
+        /// Creates a WorldManager from code (for scenes that do not have
+        /// one; see GameBootstrap).
+        /// </summary>
+        public static WorldManager Create(WorldSettings worldSettings)
+        {
+            var go = new GameObject("World");
+            go.SetActive(false);
+
+            WorldManager world = go.AddComponent<WorldManager>();
+            world.settings = worldSettings;
+
+            go.SetActive(true);
+            return world;
+        }
+
+        /// <summary>
+        /// Called when this machine starts hosting: picks a fresh random
+        /// seed if the settings ask for one (the menu backdrop uses the
+        /// settings seed until then).
+        /// </summary>
+        public void PrepareForHosting()
+        {
+            if (settings.UseRandomSeed)
+                InitializeWorld(ResolveServerSeed());
+        }
+
         private void Awake()
         {
             Active = this;

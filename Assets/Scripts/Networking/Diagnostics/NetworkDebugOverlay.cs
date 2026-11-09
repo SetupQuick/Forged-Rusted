@@ -22,6 +22,13 @@ namespace Networking
         private float _smoothedFrameTime = 1f / 60f;
         private bool _visible;
 
+        /// <summary>Shown or hidden (F3 or the interface settings).</summary>
+        public bool Visible
+        {
+            get => _visible;
+            set => _visible = value;
+        }
+
         public void Initialize(
             NetworkRuntime runtime,
             bool visible)

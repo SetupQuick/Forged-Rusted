@@ -48,11 +48,42 @@ namespace Networking
 
         public bool IsActive => _active;
 
+        private static readonly System.Collections.Generic.HashSet<object> Blockers =
+            new System.Collections.Generic.HashSet<object>();
+
+        private static readonly object DefaultBlocker = new object();
+
         /// <summary>
-        /// While true (e.g. the inventory is open) the local player does
-        /// not move or look around, and the mouse cursor is free.
+        /// While true (inventory open, game paused, ...) the local player
+        /// does not move or look around, and the mouse cursor is free.
+        /// Setting it uses a shared default owner; systems that can overlap
+        /// should use <see cref="SetGameplayInputBlocked"/> with their own key.
         /// </summary>
-        public static bool GameplayInputBlocked { get; set; }
+        public static bool GameplayInputBlocked
+        {
+            get => Blockers.Count > 0;
+            set => SetGameplayInputBlocked(DefaultBlocker, value);
+        }
+
+        /// <summary>Blocks or unblocks gameplay input on behalf of one owner.</summary>
+        public static void SetGameplayInputBlocked(object owner, bool blocked)
+        {
+            if (blocked)
+                Blockers.Add(owner);
+            else
+                Blockers.Remove(owner);
+        }
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStatics()
+        {
+            Blockers.Clear();
+        }
+
+        /// <summary>Mouse look multiplier from the settings (1 = default).</summary>
+        public static float SensitivityMultiplier { get; set; } = 1f;
+
+        public static bool InvertY { get; set; }
 
         private void Awake()
         {
@@ -238,13 +269,18 @@ namespace Networking
             Vector2 look =
                 _lookAction.ReadValue<Vector2>();
 
+            float sensitivity =
+                mouseSensitivity *
+                SensitivityMultiplier;
+
             _yaw +=
                 look.x *
-                mouseSensitivity;
+                sensitivity;
 
             _pitch -=
                 look.y *
-                mouseSensitivity;
+                sensitivity *
+                (InvertY ? -1f : 1f);
 
             _pitch =
                 Mathf.Clamp(

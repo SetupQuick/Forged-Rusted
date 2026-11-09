@@ -21,10 +21,13 @@ public sealed class FpsCounter : MonoBehaviour
 
     private GUIStyle _style;
 
+    /// <summary>Shown or hidden from the interface settings.</summary>
+    public static bool Visible = true;
+
     private void Awake()
     {
         DontDestroyOnLoad(gameObject);
-        Application.targetFrameRate = 144;
+        // Frame rate limits come from the graphics settings (GameSettingsApplier).
     }
 
     private void Update()
@@ -52,6 +55,9 @@ public sealed class FpsCounter : MonoBehaviour
 
     private void OnGUI()
     {
+        if (!Visible)
+            return;
+
         if (_style == null)
         {
             _style =

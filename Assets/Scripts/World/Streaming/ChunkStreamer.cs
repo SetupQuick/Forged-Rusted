@@ -63,6 +63,20 @@ namespace World.Streaming
 
         private int _appliedFogDistance = -1;
 
+        /// <summary>Radius in chunks around the local player (from the graphics settings).</summary>
+        public int RenderDistance
+        {
+            get => renderDistance;
+            set => renderDistance = Mathf.Max(1, value);
+        }
+
+        /// <summary>What to stream around while not in a game (menu backdrop camera).</summary>
+        public Transform FallbackTarget
+        {
+            get => fallbackTarget;
+            set => fallbackTarget = value;
+        }
+
         private readonly List<Target> _targets = new List<Target>();
         private readonly List<Target> _previousTargets = new List<Target>();
 
@@ -152,7 +166,8 @@ namespace World.Streaming
                 if (target == null && Camera.main != null)
                     target = Camera.main.transform;
 
-                if (target != null && runtime == null)
+                // Offline, or in the main menu before a game started.
+                if (target != null)
                     AddTarget(target.position, renderDistance);
 
                 return;

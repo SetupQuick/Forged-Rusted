@@ -41,6 +41,11 @@ namespace GameUI
 
         public bool IsOpen => _root != null && _root.activeSelf;
 
+        private static int _escapeFrame = -1;
+
+        /// <summary>True in the frame the inventory used Esc to close itself.</summary>
+        public static bool EscapeHandledThisFrame => _escapeFrame == Time.frameCount;
+
         public void Build(PlayerInventory inventory, RectTransform canvasRect)
         {
             _inventory = inventory;
@@ -152,12 +157,23 @@ namespace GameUI
 
             Keyboard keyboard = Keyboard.current;
 
-            if (keyboard != null)
+            bool inMenus = Game.GameFlow.Instance != null && Game.GameFlow.Instance.InMenus;
+
+            if (inMenus && IsOpen)
+                SetOpen(false);
+
+            if (keyboard != null && !inMenus)
             {
                 if (keyboard.tabKey.wasPressedThisFrame || keyboard.iKey.wasPressedThisFrame)
+                {
                     SetOpen(!IsOpen);
+                }
                 else if (IsOpen && keyboard.escapeKey.wasPressedThisFrame)
+                {
+                    // Esc closes the inventory, not also opens the pause menu.
+                    _escapeFrame = Time.frameCount;
                     SetOpen(false);
+                }
             }
 
             if (IsOpen)
