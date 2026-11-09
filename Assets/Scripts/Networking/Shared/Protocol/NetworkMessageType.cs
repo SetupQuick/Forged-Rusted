@@ -16,6 +16,8 @@ namespace Networking
         PlayerInput = 10,
         WorldSnapshot = 11,
 
-        PlayerMovementState = 12
+        PlayerMovementState = 12,
+
+        WorldInfo = 13
     }
 }

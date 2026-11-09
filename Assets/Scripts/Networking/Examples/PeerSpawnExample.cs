@@ -93,24 +93,24 @@ namespace Networking
                 return;
             }
 
-            float spawnX =
-                firstSpawnPosition.x +
-                (_spawnIndex++ * spacing);
+            // Spread players out a little, then let the world pick the
+            // nearest dry, flat spot (never inside an ocean or river).
+            // This also generates the terrain and colliders there.
+            Vector3 preferred =
+                new Vector3(
+                    firstSpawnPosition.x +
+                    (_spawnIndex++ * spacing),
+                    0f,
+                    firstSpawnPosition.z);
 
-            float spawnZ =
-                firstSpawnPosition.z;
-
-            int surfaceY =
-                _worldManager.GetSurfaceHeight(
-                    Mathf.FloorToInt(spawnX),
-                    Mathf.FloorToInt(spawnZ));
+            Vector3 ground =
+                _worldManager.FindSpawnPosition(
+                    preferred);
 
             Vector3 position =
-                new Vector3(
-                    spawnX,
-                    surfaceY +
-                    spawnHeightOffset,
-                    spawnZ);
+                ground +
+                Vector3.up *
+                spawnHeightOffset;
 
             NetObject netObject =
                 _runtime.World.SpawnAuthoritative(
@@ -125,8 +125,7 @@ namespace Networking
 
             Debug.Log(
                 $"Spawned peer {peer.Id} " +
-                $"at {position}. " +
-                $"Surface Y={surfaceY}.");
+                $"at {position}.");
         }
 
         private void OnPeerDisconnected(

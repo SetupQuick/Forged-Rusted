@@ -56,6 +56,10 @@ namespace Networking
         private GameServer _server;
         private GameClient _client;
 
+        private ServerWorldInfoModule _serverWorldInfo;
+
+        private WorldInfoMessage? _serverWorldInfoMessage;
+
         private double _previousTime;
         private bool _shuttingDown;
 
@@ -114,6 +118,28 @@ namespace Networking
             ClientStateChanged;
 
         public event Action<string> Error;
+
+        /// <summary>
+        /// Raised on clients when the server tells us which world to
+        /// generate. Also check <see cref="ReceivedWorldInfo"/> in case
+        /// it arrived before you subscribed.
+        /// </summary>
+        public event Action<WorldInfoMessage> WorldInfoReceived;
+
+        /// <summary>
+        /// The last world info received from the server (clients only).
+        /// </summary>
+        public WorldInfoMessage? ReceivedWorldInfo
+        {
+            get;
+            private set;
+        }
+
+        /// <summary>
+        /// The world info this server sends to clients (servers only).
+        /// </summary>
+        public WorldInfoMessage? ServerWorldInfo =>
+            _serverWorldInfoMessage;
 
         private void Awake()
         {
@@ -293,12 +319,70 @@ namespace Networking
             _client = null;
             _server = null;
 
+            _serverWorldInfo = null;
+            _serverWorldInfoMessage = null;
+            ReceivedWorldInfo = null;
+
             LocalPeerId = 0;
 
             world?.Shutdown();
 
             Mode = NetworkMode.Stopped;
             _shuttingDown = false;
+        }
+
+        /// <summary>
+        /// Sets the world the server hosts. Called by the world once it
+        /// has chosen a seed; clients that are already connected get it
+        /// immediately, later clients when they connect.
+        /// </summary>
+        public void SetServerWorldInfo(
+            WorldInfoMessage info)
+        {
+            if (!RunsServer)
+            {
+                throw new InvalidOperationException(
+                    "Only a server can set the world info.");
+            }
+
+            bool changed =
+                !_serverWorldInfoMessage.HasValue ||
+                !_serverWorldInfoMessage.Value.Equals(info);
+
+            _serverWorldInfoMessage = info;
+
+            if (changed)
+                _serverWorldInfo?.Broadcast();
+        }
+
+        private void OnWorldInfoReceived(
+            WorldInfoMessage info)
+        {
+            ReceivedWorldInfo = info;
+
+            Debug.Log(
+                $"Received world info: {info}.");
+
+            WorldInfoReceived?.Invoke(info);
+        }
+
+        private void InstallServerWorldInfo()
+        {
+            _serverWorldInfo =
+                new ServerWorldInfoModule(
+                    _server,
+                    () => _serverWorldInfoMessage);
+
+            _modules.Add(_serverWorldInfo);
+        }
+
+        private void InstallClientWorldInfo(
+            ClientMessageRouter router)
+        {
+            _modules.Add(
+                new ClientWorldInfoModule(
+                    router,
+                    OnWorldInfoReceived));
         }
 
         private void OnDestroy()
@@ -325,6 +409,8 @@ namespace Networking
 
             var router =
                 new ClientMessageRouter();
+
+            InstallClientWorldInfo(router);
 
             var worldReplication =
                 new ClientWorldReplication(
@@ -363,6 +449,8 @@ namespace Networking
 
             var router =
                 new ServerMessageRouter();
+
+            InstallServerWorldInfo();
 
             var playerMovement =
                 new ServerPlayerMovement(
@@ -420,6 +508,8 @@ namespace Networking
             var serverRouter =
                 new ServerMessageRouter();
 
+            InstallServerWorldInfo();
+
             var serverPlayerMovement =
                 new ServerPlayerMovement(
                     _server,
@@ -462,6 +552,8 @@ namespace Networking
 
             var clientRouter =
                 new ClientMessageRouter();
+
+            InstallClientWorldInfo(clientRouter);
 
             var clientWorldReplication =
                 new ClientWorldReplication(
