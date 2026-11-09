@@ -4,14 +4,37 @@ using UnityEngine;
 
 namespace Networking
 {
+    /// <summary>
+    /// Sends spawns, despawns and transform updates of network objects to
+    /// each peer, limited to what that peer can see (interest manager).
+    ///
+    /// Bandwidth: a changed transform is sent every tick to peers within
+    /// <see cref="NearDistance"/>, every 2nd tick up to
+    /// <see cref="MidDistance"/>, every 4th beyond (smoothing on the
+    /// client hides it at that range). When more updates are due than fit
+    /// in one packet, the ones that waited longest go first, so no object
+    /// is ever starved.
+    /// </summary>
     public sealed class ServerWorldReplication :
         IDisposable
     {
         private const uint
             TransformRefreshIntervalTicks = 16;
 
+        /// <summary>Metres within which changed transforms are sent every tick.</summary>
+        public const float NearDistance = 48f;
+
+        /// <summary>Metres within which they are sent every 2nd tick (every 4th beyond).</summary>
+        public const float MidDistance = 112f;
+
+        private readonly List<(SnapshotEntry Entry, uint Waited)> _candidates =
+            new List<(SnapshotEntry, uint)>();
+
         private const int
             MaximumSnapshotEntries = 28;
+
+        private const int
+            MaximumSnapshotsPerTick = 2;
 
         private readonly GameServer _server;
 
@@ -139,6 +162,8 @@ namespace Networking
         {
             _peerStates.Remove(
                 peerId);
+
+            (_interestManager as DistanceInterestManager)?.Forget(peerId);
         }
 
         private void OnObjectDespawned(
@@ -296,58 +321,65 @@ namespace Networking
                 peerState,
                 serverTick);
 
-            if (_snapshotEntries.Count == 0)
-                return;
-
-            bool sent =
-                _server.Send(
-                    peerState.Peer,
-                    NetworkMessageType.WorldSnapshot,
-                    writer =>
-                    {
-                        writer.Write(
-                            serverTick);
-
-                        writer.Write(
-                            (ushort)
-                            _snapshotEntries.Count);
-
-                        for (int index = 0;
-                             index <
-                                _snapshotEntries.Count;
-                             index++)
-                        {
-                            SnapshotEntry entry =
-                                _snapshotEntries[index];
-
-                            WriteStateEntry(
-                                writer,
-                                entry.NetObject.NetworkId,
-                                entry.Behaviour);
-                        }
-                    },
-                    NetworkDelivery.UnreliableSequenced);
-
-            if (!sent)
-                return;
-
-            /*
-             * This means "accepted by our send pipeline",
-             * not "confirmed received by the remote peer".
-             *
-             * Periodic transform refresh handles packet loss.
-             */
-            for (int index = 0;
-                 index < _snapshotEntries.Count;
-                 index++)
+            // One packet holds MaximumSnapshotEntries; crowded places use
+            // up to MaximumSnapshotsPerTick packets so nearby players still
+            // update every tick. Anything beyond waits for the next tick
+            // (longest-waiting first).
+            for (int first = 0;
+                 first < _snapshotEntries.Count;
+                 first += MaximumSnapshotEntries)
             {
-                SnapshotEntry entry =
-                    _snapshotEntries[index];
+                int count = Math.Min(MaximumSnapshotEntries, _snapshotEntries.Count - first);
+                int start = first;
 
-                peerState.MarkSent(
-                    entry.NetObject,
-                    entry.Behaviour,
-                    serverTick);
+                bool sent =
+                    _server.Send(
+                        peerState.Peer,
+                        NetworkMessageType.WorldSnapshot,
+                        writer =>
+                        {
+                            writer.Write(
+                                serverTick);
+
+                            writer.Write(
+                                (ushort)count);
+
+                            for (int index = start;
+                                 index < start + count;
+                                 index++)
+                            {
+                                SnapshotEntry entry =
+                                    _snapshotEntries[index];
+
+                                WriteStateEntry(
+                                    writer,
+                                    entry.NetObject.NetworkId,
+                                    entry.Behaviour);
+                            }
+                        },
+                        NetworkDelivery.UnreliableSequenced);
+
+                if (!sent)
+                    return;
+
+                /*
+                 * This means "accepted by our send pipeline",
+                 * not "confirmed received by the remote peer".
+                 *
+                 * Periodic transform refresh handles packet loss.
+                 */
+                for (int index = start;
+                     index < start + count;
+                     index++)
+                {
+                    SnapshotEntry entry =
+                        _snapshotEntries[index];
+
+                    peerState.MarkSent(
+                        entry.NetObject,
+                        entry.Behaviour,
+                        serverTick);
+                }
             }
         }
 
@@ -356,17 +388,16 @@ namespace Networking
             uint serverTick)
         {
             _snapshotEntries.Clear();
+            _candidates.Clear();
+
+            // Where this peer's player is, for distance-based send rates.
+            NetObject anchor =
+                (_interestManager as DistanceInterestManager)?.GetAnchor(peerState.Peer.Id);
 
             foreach (
                 uint networkId
                 in peerState.ObservedObjects)
             {
-                if (_snapshotEntries.Count >=
-                    MaximumSnapshotEntries)
-                {
-                    break;
-                }
-
                 if (!_world.TryGet(
                         networkId,
                         out NetObject netObject))
@@ -397,27 +428,59 @@ namespace Networking
                     continue;
                 }
 
+                uint minimumInterval = SendInterval(anchor, netObject);
+
                 if (!ShouldSendBehaviour(
                         peerState,
                         netObject,
                         transformBehaviour,
-                        serverTick))
+                        serverTick,
+                        minimumInterval))
                 {
                     continue;
                 }
 
-                _snapshotEntries.Add(
-                    new SnapshotEntry(
-                        netObject,
-                        transformBehaviour));
+                _candidates.Add((
+                    new SnapshotEntry(netObject, transformBehaviour),
+                    peerState.TicksSinceSent(netObject, transformBehaviour, serverTick)));
             }
+
+            // Longest-waiting first, so nothing starves when more updates
+            // are due than fit in one snapshot.
+            int capacity = MaximumSnapshotEntries * MaximumSnapshotsPerTick;
+
+            if (_candidates.Count > capacity)
+                _candidates.Sort(LongestWaitingFirst);
+
+            int count = Math.Min(_candidates.Count, capacity);
+            for (int index = 0; index < count; index++)
+                _snapshotEntries.Add(_candidates[index].Entry);
+        }
+
+        private static readonly Comparison<(SnapshotEntry Entry, uint Waited)> LongestWaitingFirst =
+            (a, b) => b.Waited.CompareTo(a.Waited);
+
+        /// <summary>Minimum ticks between updates of a changed object, by distance.</summary>
+        private static uint SendInterval(NetObject anchor, NetObject netObject)
+        {
+            if (anchor == null || anchor == netObject)
+                return 1;
+
+            Vector3 offset = netObject.transform.position - anchor.transform.position;
+            float distance = offset.x * offset.x + offset.z * offset.z;
+
+            if (distance <= NearDistance * NearDistance)
+                return 1;
+
+            return distance <= MidDistance * MidDistance ? 2u : 4u;
         }
 
         private static bool ShouldSendBehaviour(
             PeerReplicationState peerState,
             NetObject netObject,
             NetBehaviour behaviour,
-            uint serverTick)
+            uint serverTick,
+            uint minimumIntervalTicks)
         {
             if (behaviour == null)
                 return false;
@@ -429,7 +492,8 @@ namespace Networking
                         netObject,
                         behaviour,
                         serverTick,
-                        TransformRefreshIntervalTicks);
+                        TransformRefreshIntervalTicks,
+                        minimumIntervalTicks);
 
                 /*
                  * Future replicated behaviours can add

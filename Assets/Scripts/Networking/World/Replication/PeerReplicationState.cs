@@ -31,7 +31,8 @@ namespace Networking
             NetObject netObject,
             NetBehaviour behaviour,
             uint serverTick,
-            uint refreshIntervalTicks)
+            uint refreshIntervalTicks,
+            uint minimumIntervalTicks = 1)
         {
             var key =
                 new BehaviourReplicationKey(
@@ -45,19 +46,36 @@ namespace Networking
                 return true;
             }
 
-            if (sentState.Version !=
-                behaviour.StateVersion)
-            {
-                return true;
-            }
-
             uint elapsed =
                 unchecked(
                     serverTick -
                     sentState.LastSentTick);
 
+            // Changed: send, but not more often than the distance allows.
+            if (sentState.Version !=
+                behaviour.StateVersion)
+            {
+                return elapsed >= minimumIntervalTicks;
+            }
+
             return elapsed >=
                    refreshIntervalTicks;
+        }
+
+        /// <summary>Ticks since this behaviour was last sent (uint.MaxValue if never).</summary>
+        public uint TicksSinceSent(
+            NetObject netObject,
+            NetBehaviour behaviour,
+            uint serverTick)
+        {
+            var key =
+                new BehaviourReplicationKey(
+                    netObject.NetworkId,
+                    behaviour.ComponentType);
+
+            return _behaviourStates.TryGetValue(key, out BehaviourSendState sentState)
+                ? unchecked(serverTick - sentState.LastSentTick)
+                : uint.MaxValue;
         }
 
         public void MarkSent(

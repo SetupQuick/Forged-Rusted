@@ -516,7 +516,7 @@ namespace Networking
                     world);
 
             var interestManager =
-                new FullInterestManager(
+                new DistanceInterestManager(
                     world);
 
             var worldReplication =
@@ -575,7 +575,7 @@ namespace Networking
                     world);
 
             var interestManager =
-                new FullInterestManager(
+                new DistanceInterestManager(
                     world);
 
             var serverWorldReplication =
