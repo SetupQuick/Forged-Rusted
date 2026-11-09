@@ -105,3 +105,40 @@ wood, water), landing, block break and place by material, splash when
 entering water, swim strokes. Other players' sounds are positional.
 Hearing is muffled while your head is under water. Swap in recorded
 sounds later in `GameSounds`.
+
+## First-person arms (`Player/FirstPersonArms`)
+
+The local player sees their own voxel arms (same parts and colours as
+their character) holding the selected hotbar item. Animated in code:
+
+* walking / running: arms bob with the steps; lower and tilted while sprinting;
+* looking around: arms lag slightly behind camera turns;
+* jumping / landing: lift while falling, dip on landing; crouching: a bit lower;
+* breaking / placing: a quick jab towards the crosshair;
+* swimming: both arms do breaststrokes and the item is put away.
+
+The rig is scaled down and kept within ~0.25 m of the eye, so it never
+pokes into walls (the player is 0.6 m wide) and needs no extra camera or
+layer.
+
+## Held items, also for other players
+
+* `ItemData.heldPrefab` (optional): a model shown in the hand, grip at its
+  pivot. This is where tools go later. Without it, blocks show a small
+  voxel cube in their colours and other items a coloured tile
+  (`Player/HeldItemModel`).
+* The server knows each player's selected hotbar slot (new `SelectSlot`
+  action) and sends an `Equipment` message whenever what they hold
+  changes (and the current state to players who join). Other players'
+  characters show the item in their right hand (`PlayerAvatar`).
+  Protocol version 9.
+* Not replicated yet: other players' break/place swing.
+
+## Underwater (`World/Rendering/UnderwaterEffect`)
+
+When the camera is in water: dense blue-green fog (things fade out within
+~15 m), weaker sunlight, and the water surface seen from below becomes a
+lit, mostly opaque ceiling instead of a window to the sky. The normal
+distance fog is restored when surfacing. Fog shader variants are kept in
+builds (Graphics settings, fog stripping = Custom) so this and the
+distance fog also work outside the editor.

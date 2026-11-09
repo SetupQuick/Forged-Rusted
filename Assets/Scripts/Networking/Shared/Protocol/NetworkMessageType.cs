@@ -30,6 +30,9 @@ namespace Networking
         InventorySnapshot = 16,
 
         // Server -> joining client: batch of earlier block changes.
-        WorldEdits = 17
+        WorldEdits = 17,
+
+        // Server -> clients: what a player is holding (for hands/avatars).
+        Equipment = 18
     }
 }

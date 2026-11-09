@@ -41,6 +41,10 @@ namespace Networking
             public uint LastSequence;
             public bool InventoryDirty;
 
+            // Selected hotbar slot and the item last told to everyone.
+            public int SelectedSlot;
+            public ushort BroadcastHeld = ushort.MaxValue;
+
             // Earlier world edits still to send to this player, in order.
             public List<BlockChange> EditBacklog;
             public int EditBacklogIndex;
@@ -88,7 +92,38 @@ namespace Networking
 
                 if (state.InventoryDirty)
                     SendInventory(state);
+
+                BroadcastEquipmentIfChanged(state);
             }
+        }
+
+        /// <summary>Tells everyone when a player's held item changed.</summary>
+        private void BroadcastEquipmentIfChanged(PlayerState state)
+        {
+            ItemStack held = state.Inventory[state.SelectedSlot];
+            ushort id = held.IsEmpty ? (ushort)0 : ItemDatabase.GetNetworkId(held.Item);
+
+            if (id == state.BroadcastHeld)
+                return;
+
+            ItemData item = held.IsEmpty ? null : held.Item;
+            uint peerId = state.Peer.Id;
+            bool all = true;
+
+            foreach (PlayerState other in _players.Values)
+            {
+                if (other.Peer.State != ServerPeerState.Connected)
+                    continue;
+
+                all &= _server.Send(
+                    other.Peer,
+                    NetworkMessageType.Equipment,
+                    writer => GameplayMessages.WriteEquipment(writer, peerId, item),
+                    NetworkDelivery.ReliableOrdered);
+            }
+
+            if (all)
+                state.BroadcastHeld = id;
         }
 
         public void Dispose()
@@ -135,6 +170,22 @@ namespace Networking
             // Start right away so edits arrive right after the world seed.
             SendEditBacklog(state);
             SendInventory(state);
+
+            // What everyone else is holding.
+            foreach (PlayerState other in _players.Values)
+            {
+                if (other == state || other.BroadcastHeld == ushort.MaxValue)
+                    continue;
+
+                ItemData item = ItemDatabase.GetByNetworkId(other.BroadcastHeld);
+                uint otherId = other.Peer.Id;
+
+                _server.Send(
+                    peer,
+                    NetworkMessageType.Equipment,
+                    writer => GameplayMessages.WriteEquipment(writer, otherId, item),
+                    NetworkDelivery.ReliableOrdered);
+            }
         }
 
         private void OnPeerDisconnected(uint peerId)
@@ -180,6 +231,11 @@ namespace Networking
                 case PlayerActionType.PlaceBlock:
                     if (!TryPlace(state, action.Position, action.Slot))
                         Reject(state, action.Position);
+                    break;
+
+                case PlayerActionType.SelectSlot:
+                    if (action.Slot < state.Inventory.HotbarSize)
+                        state.SelectedSlot = action.Slot;
                     break;
             }
         }

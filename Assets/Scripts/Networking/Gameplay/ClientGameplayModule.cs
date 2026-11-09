@@ -25,6 +25,16 @@ namespace Networking
         private readonly ClientMessageRouter _router;
         private readonly Func<IGameplayWorld> _world;
         private readonly List<BlockChange> _buffer = new List<BlockChange>();
+        private readonly Dictionary<uint, ItemData> _heldByPeer = new Dictionary<uint, ItemData>();
+
+        /// <summary>(peer id, item now held or null) - for other players' avatars.</summary>
+        public event Action<uint, ItemData> HeldItemChanged;
+
+        /// <summary>What another player is holding, as last told by the server.</summary>
+        public ItemData GetHeldItem(uint peerId)
+        {
+            return _heldByPeer.TryGetValue(peerId, out ItemData item) ? item : null;
+        }
         private uint _nextSequence = 1;
         private bool _disposed;
 
@@ -55,6 +65,16 @@ namespace Networking
             _router.Register(NetworkMessageType.BlockChanged, OnBlockChanged);
             _router.Register(NetworkMessageType.WorldEdits, OnWorldEdits);
             _router.Register(NetworkMessageType.InventorySnapshot, OnInventorySnapshot);
+            _router.Register(NetworkMessageType.Equipment, OnEquipment);
+        }
+
+        private void OnEquipment(byte[] payload)
+        {
+            if (!GameplayMessages.TryReadEquipment(payload, out uint peerId, out ItemData held))
+                return;
+
+            _heldByPeer[peerId] = held;
+            HeldItemChanged?.Invoke(peerId, held);
         }
 
         /// <summary>Sends an action; returns its sequence number (0 if not connected).</summary>
@@ -110,6 +130,7 @@ namespace Networking
             _router.Unregister(NetworkMessageType.BlockChanged, OnBlockChanged);
             _router.Unregister(NetworkMessageType.WorldEdits, OnWorldEdits);
             _router.Unregister(NetworkMessageType.InventorySnapshot, OnInventorySnapshot);
+            _router.Unregister(NetworkMessageType.Equipment, OnEquipment);
         }
 
         private void OnBlockChanged(byte[] payload)

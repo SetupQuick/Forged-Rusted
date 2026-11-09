@@ -74,6 +74,10 @@ namespace Networking
                     WritePosition(writer, action.Position);
                     writer.Write(action.Slot);
                     break;
+
+                case PlayerActionType.SelectSlot:
+                    writer.Write(action.Slot);
+                    break;
             }
         }
 
@@ -105,6 +109,10 @@ namespace Networking
 
                     case PlayerActionType.PlaceBlock:
                         action.Position = ReadPosition(reader);
+                        action.Slot = reader.ReadByte();
+                        break;
+
+                    case PlayerActionType.SelectSlot:
                         action.Slot = reader.ReadByte();
                         break;
 
@@ -216,6 +224,34 @@ namespace Networking
             {
                 var reader = new PacketReader(payload);
                 change = BlockChange.Read(reader);
+                return reader.Remaining == 0;
+            }
+            catch (System.InvalidOperationException)
+            {
+                return false;
+            }
+        }
+
+        // --------------------------------------------------------------
+        // Equipment (server -> clients)
+        // --------------------------------------------------------------
+
+        public static void WriteEquipment(PacketWriter writer, uint peerId, ItemData held)
+        {
+            writer.Write(peerId);
+            writer.Write(ItemDatabase.GetNetworkId(held));
+        }
+
+        public static bool TryReadEquipment(byte[] payload, out uint peerId, out ItemData held)
+        {
+            peerId = 0;
+            held = null;
+
+            try
+            {
+                var reader = new PacketReader(payload);
+                peerId = reader.ReadUInt32();
+                held = ItemDatabase.GetByNetworkId(reader.ReadUInt16());
                 return reader.Remaining == 0;
             }
             catch (System.InvalidOperationException)

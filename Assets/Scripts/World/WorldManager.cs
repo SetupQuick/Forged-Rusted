@@ -334,6 +334,10 @@ namespace World
             if (_renderingEnabled && GetComponent<GameAudio.WorldAudio>() == null)
                 gameObject.AddComponent<GameAudio.WorldAudio>();
 
+            // Underwater fog when the camera dives.
+            if (_renderingEnabled && GetComponent<UnderwaterEffect>() == null)
+                gameObject.AddComponent<UnderwaterEffect>();
+
             Debug.Log(
                 $"World initialised: seed {seed}, " +
                 $"height {config.WorldHeight}, sea level {config.SeaLevel}.");

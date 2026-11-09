@@ -7,7 +7,7 @@ namespace Networking
         public const uint Magic = 0x46525354;
 
         // Incremented because the wire format has changed.
-        public const ushort Version = 8;
+        public const ushort Version = 9;
 
         // The lowest two bits store NetworkDelivery.
         private const byte DeliveryMask = 0b00000011;

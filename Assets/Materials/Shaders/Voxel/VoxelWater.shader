@@ -138,6 +138,17 @@ Shader "ForgedRusted/Voxel Water"
                 color = MixFog(color, input.fogFactor);
 
                 half alpha = saturate(_Opacity + fresnel * 0.3) * _Tint.a;
+
+                // Seen from below, the surface is a bright, mostly opaque
+                // ceiling (like total internal reflection) instead of a
+                // clear window to the sky.
+                if (!isFrontFace)
+                {
+                    color = lerp(input.color.rgb * (ambient * 0.5 + light.color * 0.2), color, 0.2);
+                    color = MixFog(color, input.fogFactor);
+                    alpha = 0.85 * _Tint.a;
+                }
+
                 return half4(color, alpha);
             }
             ENDHLSL
