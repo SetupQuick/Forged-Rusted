@@ -3,15 +3,6 @@ using World.Blocks;
 
 namespace Items
 {
-    /// <summary>
-    /// Definition of an item type (not an item instance - counts live in
-    /// <see cref="ItemStack"/>).
-    ///
-    /// Item assets go in a Resources/Items folder so
-    /// <see cref="ItemDatabase"/> can find them by id. Block items are
-    /// created automatically for every placeable block.
-    /// </summary>
-    [CreateAssetMenu(fileName = "New Item", menuName = "Inventory/Item")]
     public enum ToolType : byte
     {
         None = 0,
@@ -21,6 +12,15 @@ namespace Items
         Sword = 4
     }
 
+    /// <summary>
+    /// Definition of an item type (not an item instance - counts live in
+    /// <see cref="ItemStack"/>).
+    ///
+    /// Item assets go in a Resources/Items folder so
+    /// <see cref="ItemDatabase"/> can find them by id. Block items are
+    /// created automatically for every placeable block.
+    /// </summary>
+    [CreateAssetMenu(fileName = "New Item", menuName = "Inventory/Item")]
     public class ItemData : ScriptableObject
     {
         [Tooltip("Unique id used in saves and network messages. " +
