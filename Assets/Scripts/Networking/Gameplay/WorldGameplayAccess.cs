@@ -129,5 +129,128 @@ namespace Networking
         {
             _blockChanged?.Invoke(voxel, block);
         }
+
+        // ------------------------------------------------------------
+        // Players
+        // ------------------------------------------------------------
+
+        private CharacterMotor FindMotor(uint peerId)
+        {
+            if (_networkWorld == null)
+                return null;
+
+            foreach (NetObject netObject in _networkWorld.Objects)
+            {
+                if (netObject != null && netObject.IsSpawned && netObject.OwnerPeerId == peerId &&
+                    netObject.TryGetComponent(out CharacterMotor motor))
+                {
+                    return motor;
+                }
+            }
+
+            return null;
+        }
+
+        public bool TryGetPlayerBody(uint peerId, out Vector3 feet, out float yaw, out float verticalVelocity, out bool grounded, out bool inWater)
+        {
+            feet = default;
+            yaw = 0f;
+            verticalVelocity = 0f;
+            grounded = false;
+            inWater = false;
+
+            CharacterMotor motor = FindMotor(peerId);
+            if (motor == null)
+                return false;
+
+            CharacterMotorState state = motor.CaptureState();
+            feet = state.Position;
+            yaw = state.Rotation.eulerAngles.y;
+            verticalVelocity = state.VerticalVelocity;
+            grounded = motor.WasGrounded;
+            inWater = motor.IsSwimming;
+            return true;
+        }
+
+        public void TeleportPlayer(uint peerId, Vector3 feet)
+        {
+            CharacterMotor motor = FindMotor(peerId);
+            if (motor == null)
+                return;
+
+            CharacterMotorState state = motor.CaptureState();
+            motor.RestoreState(new CharacterMotorState(feet, state.Rotation, 0f, state.ControllerHeight));
+        }
+
+        public Vector3 SpawnPoint =>
+            World != null && World.IsReady ? World.FindSpawnPosition(Vector3.zero) + Vector3.up * 0.1f : Vector3.up * 60f;
+
+        public bool IsNight
+        {
+            get
+            {
+                float t = global::World.WorldClock.TimeOfDay;
+                return t < 0.23f || t > 0.77f;
+            }
+        }
+
+        // ------------------------------------------------------------
+        // Creatures and dropped items
+        // ------------------------------------------------------------
+
+        private readonly Dictionary<uint, NetObject> _entityObjects = new Dictionary<uint, NetObject>();
+
+        public uint SpawnEntity(Gameplay.Entities.ServerEntity entity)
+        {
+            if (_networkWorld == null)
+                return 0;
+
+            Gameplay.Entities.EntityPrefabs.Register(_networkWorld);
+
+            NetObject netObject = _networkWorld.SpawnAuthoritative(
+                Gameplay.Entities.EntityPrefabs.Template,
+                entity.Position,
+                Quaternion.Euler(0f, entity.Yaw, 0f));
+
+            _entityObjects[netObject.NetworkId] = netObject;
+            entity.Id = netObject.NetworkId;
+            entity.StateDirty = true;
+            UpdateEntity(entity);
+            return netObject.NetworkId;
+        }
+
+        public void UpdateEntity(Gameplay.Entities.ServerEntity entity)
+        {
+            if (!_entityObjects.TryGetValue(entity.Id, out NetObject netObject) || netObject == null)
+                return;
+
+            netObject.transform.SetPositionAndRotation(entity.Position, Quaternion.Euler(0f, entity.Yaw, 0f));
+
+            if (entity.StateDirty && netObject.TryGetComponent(out Gameplay.Entities.EntityState state))
+            {
+                ushort item = 0;
+                if (entity.ItemId != null && Items.ItemDatabase.TryGet(entity.ItemId, out Items.ItemData data))
+                    item = Items.ItemDatabase.GetNetworkId(data);
+
+                state.Set(entity.Kind, Mathf.Max(0f, entity.Health), entity.Definition.MaxHealth, item, entity.Count);
+                entity.StateDirty = false;
+            }
+        }
+
+        public void DespawnEntity(uint id)
+        {
+            if (_networkWorld == null)
+                return;
+
+            _entityObjects.Remove(id);
+            _networkWorld.Despawn(id);
+        }
+
+        public void SetMovementAbilities(uint peerId, CharacterMotor.MovementAbilities abilities)
+        {
+            CharacterMotor motor = FindMotor(peerId);
+            if (motor != null)
+                motor.Abilities = abilities;
+        }
     }
 }

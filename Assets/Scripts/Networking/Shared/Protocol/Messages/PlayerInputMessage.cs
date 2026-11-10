@@ -13,13 +13,19 @@ namespace Networking
 
         // Jump key is held down (Jump is only the press). Used to swim
         // upwards.
-        JumpHeld = 1 << 3
+        JumpHeld = 1 << 3,
+
+        // Skill tree movement abilities (pressed this tick or the ones
+        // after it, like Jump).
+        Dash = 1 << 4,
+        Grapple = 1 << 5
     }
 
     public readonly struct PlayerInputMessage
     {
         public const int CommandSize =
             sizeof(uint) +
+            sizeof(float) +
             sizeof(float) +
             sizeof(float) +
             sizeof(float) +
@@ -32,6 +38,9 @@ namespace Networking
         public Vector2 Move { get; }
 
         public float Yaw { get; }
+
+        /// <summary>Look up/down in degrees (grappling hook aim).</summary>
+        public float Pitch { get; }
 
         public PlayerInputButtons Buttons { get; }
 
@@ -47,17 +56,25 @@ namespace Networking
         public bool JumpHeld =>
             (Buttons & PlayerInputButtons.JumpHeld) != 0;
 
+        public bool Dash =>
+            (Buttons & PlayerInputButtons.Dash) != 0;
+
+        public bool Grapple =>
+            (Buttons & PlayerInputButtons.Grapple) != 0;
+
         public PlayerInputMessage(
             uint networkId,
             uint inputSequence,
             Vector2 move,
             float yaw,
-            PlayerInputButtons buttons)
+            PlayerInputButtons buttons,
+            float pitch = 0f)
         {
             NetworkId = networkId;
             InputSequence = inputSequence;
             Move = Vector2.ClampMagnitude(move, 1f);
             Yaw = Mathf.Repeat(yaw, 360f);
+            Pitch = Mathf.Clamp(pitch, -90f, 90f);
             Buttons = buttons;
         }
 
@@ -68,7 +85,8 @@ namespace Networking
                 InputSequence,
                 Move,
                 Yaw,
-                Buttons & ~PlayerInputButtons.Jump);
+                Buttons & ~(PlayerInputButtons.Jump | PlayerInputButtons.Dash | PlayerInputButtons.Grapple),
+                Pitch);
         }
 
         internal void WriteCommand(PacketWriter writer)
@@ -77,6 +95,7 @@ namespace Networking
             writer.Write(Move.x);
             writer.Write(Move.y);
             writer.Write(Yaw);
+            writer.Write(Pitch);
             writer.Write((byte)Buttons);
         }
 
@@ -100,6 +119,7 @@ namespace Networking
             float moveX = reader.ReadFloat();
             float moveY = reader.ReadFloat();
             float yaw = reader.ReadFloat();
+            float pitch = reader.ReadFloat();
 
             var buttons =
                 (PlayerInputButtons)
@@ -109,12 +129,15 @@ namespace Networking
                 PlayerInputButtons.Jump |
                 PlayerInputButtons.Sprint |
                 PlayerInputButtons.Crouch |
-                PlayerInputButtons.JumpHeld;
+                PlayerInputButtons.JumpHeld |
+                PlayerInputButtons.Dash |
+                PlayerInputButtons.Grapple;
 
             if (inputSequence == 0 ||
                 !IsFinite(moveX) ||
                 !IsFinite(moveY) ||
                 !IsFinite(yaw) ||
+                !IsFinite(pitch) ||
                 (buttons & ~allowedButtons) != 0)
             {
                 return false;
@@ -125,7 +148,8 @@ namespace Networking
                 inputSequence,
                 new Vector2(moveX, moveY),
                 yaw,
-                buttons);
+                buttons,
+                pitch);
 
             return true;
         }

@@ -40,8 +40,26 @@ namespace Items
             return Color.gray;
         }
 
+        private static ItemData Food(string id, string name, float heal)
+        {
+            var item = ScriptableObject.CreateInstance<ItemData>();
+            item.id = id;
+            item.name = id;
+            item.itemName = name;
+            item.healAmount = heal;
+            item.maxStackSize = 64;
+            item.hideFlags = HideFlags.DontSave;
+            return item;
+        }
+
         public static System.Collections.Generic.IEnumerable<ItemData> CreateAll()
         {
+            // Food dropped by animals. The assets in Resources/Items (same
+            // ids) replace these; they exist so loot never refers to an
+            // unknown item.
+            yield return Food("Pork", "Pork", 6f);
+            yield return Food("Chicken", "Chicken", 4f);
+
             foreach (Material material in Materials)
             {
                 foreach (ToolType type in new[] { ToolType.Pickaxe, ToolType.Axe, ToolType.Shovel, ToolType.Sword })

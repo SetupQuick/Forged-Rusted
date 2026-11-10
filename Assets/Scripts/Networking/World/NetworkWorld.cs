@@ -23,6 +23,8 @@ namespace Networking
 
         public int ObjectCount => _objects.Count;
 
+        public NetPrefabRegistry PrefabRegistry => prefabRegistry;
+
         /// <summary>For scenes built from code (see GameBootstrap).</summary>
         public void SetPrefabRegistry(NetPrefabRegistry registry)
         {
@@ -92,6 +94,10 @@ namespace Networking
                     position,
                     rotation,
                     spawnedObjectRoot);
+
+            // Prefabs built in code are inactive templates.
+            if (!instance.gameObject.activeSelf)
+                instance.gameObject.SetActive(true);
 
             try
             {
@@ -176,6 +182,10 @@ namespace Networking
                     position,
                     rotation,
                     spawnedObjectRoot);
+
+            // Prefabs built in code are inactive templates.
+            if (!instance.gameObject.activeSelf)
+                instance.gameObject.SetActive(true);
 
             try
             {

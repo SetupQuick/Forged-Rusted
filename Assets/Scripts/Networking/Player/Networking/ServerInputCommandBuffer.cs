@@ -183,7 +183,8 @@ namespace Networking
                 _lastSimulatedSequence,
                 Vector2.zero,
                 _heldCommand.Yaw,
-                PlayerInputButtons.None);
+                PlayerInputButtons.None,
+                _heldCommand.Pitch);
         }
 
         private uint FindNearestSequence()

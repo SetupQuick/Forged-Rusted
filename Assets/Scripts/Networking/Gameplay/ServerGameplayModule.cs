@@ -19,7 +19,7 @@ namespace Networking
     ///   sender if rejected) -> InventorySnapshot to the sender with the
     ///   last processed action, which the client reconciles against.
     /// </summary>
-    public sealed class ServerGameplayModule : INetworkModule
+    public sealed partial class ServerGameplayModule : INetworkModule
     {
         public int TickOrder => 110;
         public int DisposeOrder => 95;
@@ -48,6 +48,19 @@ namespace Networking
 
         private sealed class PlayerState
         {
+            // Health (Survival.cs).
+            public float Health = PlayerMaxHealth;
+            public bool Dead;
+            public float RespawnTimer;
+            public bool WasGrounded = true;
+            public float FallSpeed;          // fastest downward speed since leaving the ground
+            public float SinceDamage = 99f;
+            public float RegenTimer;
+            public double LastAttack = -99;
+            public bool StatusDirty = true;
+            public Gameplay.PlayerProgress Progress = new Gameplay.PlayerProgress();
+            public bool BroadcastInvisible;
+
             // Block being hit and when that started (server time), for break timing.
             public Vector3Int BreakingVoxel;
             public double BreakingSince = -1;
@@ -159,6 +172,8 @@ namespace Networking
             state.Inventory.SetAll(slots, notify: false);
             state.Held = ItemStack.Empty;
             state.InventoryDirty = true;
+            state.Progress = Gameplay.PlayerProgress.Deserialize(saved.Progress);
+            state.StatusDirty = true;
             PlayersVersion++;
         }
 
@@ -167,7 +182,8 @@ namespace Networking
             var data = new global::World.Saving.PlayerSaveData
             {
                 Name = state.ProfileName ?? string.Empty,
-                SelectedSlot = state.SelectedSlot
+                SelectedSlot = state.SelectedSlot,
+                Progress = state.Progress.Serialize()
             };
 
             bool heldStored = state.Held.IsEmpty;
@@ -222,6 +238,8 @@ namespace Networking
 
                 BroadcastEquipmentIfChanged(state);
             }
+
+            TickSurvival((float)deltaTime);
 
             if (now >= _nextTimeSync)
             {
@@ -405,6 +423,30 @@ namespace Networking
                     if (action.Slot < state.Inventory.HotbarSize)
                         state.SelectedSlot = action.Slot;
                     break;
+
+                case PlayerActionType.Attack:
+                    TryAttack(state, action.Target);
+                    break;
+
+                case PlayerActionType.DropItem:
+                    TryDrop(state, action.Slot, action.Button == 1);
+                    break;
+
+                case PlayerActionType.UseItem:
+                    TryUse(state, action.Slot);
+                    break;
+
+                case PlayerActionType.ChooseClass:
+                    TryChooseClass(state, action.Slot);
+                    break;
+
+                case PlayerActionType.UnlockSkill:
+                    TryUnlockSkill(state, action.Slot);
+                    break;
+
+                case PlayerActionType.UseAbility:
+                    TryUseAbility(state, (AbilityCode)action.Slot, action.Direction);
+                    break;
             }
         }
 
@@ -436,6 +478,9 @@ namespace Networking
             state.BreakingSince = -1;
             _world.SetBlock(voxel, BlockId.Air);
             InventoryLogic.AddDrop(state.Inventory, block, tool);
+
+            if (Mining.CanHarvest(block, tool))
+                state.Progress.OnMined(block, ref state.StatusDirty);
             return true;
         }
 

@@ -46,6 +46,26 @@ namespace Networking
                    registered == prefab;
         }
 
+        /// <summary>
+        /// Adds a prefab built in code (creatures, dropped items). Every
+        /// machine must register the same prefabs with the same ids.
+        /// </summary>
+        public void RegisterRuntime(NetObject prefab)
+        {
+            if (prefab == null || prefab.PrefabId == 0)
+                throw new ArgumentException("Runtime prefabs need a prefab id.", nameof(prefab));
+
+            EnsureCache();
+
+            if (_prefabsById.TryGetValue(prefab.PrefabId, out NetObject existing) && existing != prefab && existing != null)
+                throw new InvalidOperationException($"Network prefab id {prefab.PrefabId} is already used by {existing.name}.");
+
+            _prefabsById[prefab.PrefabId] = prefab;
+            _runtime[prefab.PrefabId] = prefab;
+        }
+
+        private readonly Dictionary<ushort, NetObject> _runtime = new Dictionary<ushort, NetObject>();
+
         private void OnEnable()
         {
             _cacheBuilt = false;
@@ -91,6 +111,11 @@ namespace Networking
                     prefab.PrefabId,
                     prefab);
             }
+
+            // Runtime prefabs survive a cache rebuild.
+            foreach (KeyValuePair<ushort, NetObject> runtime in _runtime)
+                if (runtime.Value != null)
+                    _prefabsById[runtime.Key] = runtime.Value;
 
             _cacheBuilt = true;
         }

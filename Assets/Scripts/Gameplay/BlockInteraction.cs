@@ -36,6 +36,10 @@ namespace Gameplay
         public float BreakSeconds { get; private set; }
 
         private Vector3Int _breakingVoxel;
+        private float _attackCooldown;
+
+        /// <summary>The creature under the crosshair (within reach), if any.</summary>
+        public Gameplay.Entities.EntityView TargetEntity { get; private set; }
         private bool _breaking;
 
         public VoxelHit Target { get; private set; }
@@ -93,8 +97,44 @@ namespace Gameplay
 
             Mouse mouse = Mouse.current;
 
-            if (mouse == null || !HasTarget)
+            if (mouse == null)
                 return;
+
+            // A creature in front of the block takes the hit instead.
+            TargetEntity = Gameplay.Entities.EntityView.Raycast(
+                new Ray(view.position, view.forward),
+                BlockEditRules.ReachMetres - 0.5f,
+                out float entityDistance);
+
+            if (TargetEntity != null && HasTarget && Target.Distance < entityDistance)
+                TargetEntity = null;
+
+            _attackCooldown -= Time.deltaTime;
+            if (TargetEntity != null)
+            {
+                StopBreaking();
+                if (mouse.leftButton.isPressed && _attackCooldown <= 0f)
+                {
+                    _attackCooldown = 0.4f;
+                    _inventory.AttackEntity(TargetEntity.NetworkId);
+                    _inventory.NotifySwing();
+                }
+
+                return;
+            }
+
+            // Right click with food eats it.
+            if (mouse.rightButton.wasPressedThisFrame && !_inventory.SelectedStack.IsEmpty && _inventory.SelectedStack.Item.healAmount > 0f)
+            {
+                _inventory.UseSelected();
+                _placeCooldown = 0.5f;
+            }
+
+            if (!HasTarget)
+            {
+                StopBreaking();
+                return;
+            }
 
             if (mouse.rightButton.wasPressedThisFrame)
                 _placeCooldown = 0f;

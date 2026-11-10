@@ -16,6 +16,9 @@ namespace World.Saving
 
         /// <summary>One entry per inventory slot: item id (null = empty) and count.</summary>
         public List<(string ItemId, int Count)> Slots = new List<(string, int)>();
+
+        /// <summary>Class, level, skills, quests (Gameplay.PlayerProgress.Serialize). Format 2+.</summary>
+        public string Progress = string.Empty;
     }
 
     /// <summary>Everything a world save holds.</summary>
@@ -65,7 +68,8 @@ namespace World.Saving
     {
         public const string FileName = "world.frs";
         private const uint Magic = 0x56535246; // "FRSV"
-        public const ushort FormatVersion = 1;
+        // 1: first version. 2: player progress (class, level, skills, quests).
+        public const ushort FormatVersion = 2;
 
         public static void Write(string path, WorldSaveData data)
         {
@@ -200,6 +204,8 @@ namespace World.Saving
                     writer.Write(itemId ?? string.Empty);
                     writer.Write(count);
                 }
+
+                writer.Write(player.Value.Progress ?? string.Empty);
             }
         }
 
@@ -246,6 +252,9 @@ namespace World.Saving
                     int count = reader.ReadInt32();
                     player.Slots.Add((itemId.Length == 0 ? null : itemId, count));
                 }
+
+                if (version >= 2)
+                    player.Progress = reader.ReadString();
 
                 data.Players[id] = player;
             }

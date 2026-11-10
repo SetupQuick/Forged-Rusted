@@ -31,5 +31,28 @@ namespace Networking
 
         /// <summary>True if any player's body overlaps the box (metres).</summary>
         bool OverlapsAnyPlayer(Bounds bounds);
+
+        /// <summary>Feet position, facing and movement state of a player's body.</summary>
+        bool TryGetPlayerBody(uint peerId, out Vector3 feet, out float yaw, out float verticalVelocity, out bool grounded, out bool inWater);
+
+        /// <summary>Moves a player (respawn). The client follows through movement reconciliation.</summary>
+        void TeleportPlayer(uint peerId, Vector3 feet);
+
+        /// <summary>Where players (re)spawn, on solid ground.</summary>
+        Vector3 SpawnPoint { get; }
+
+        /// <summary>Night time (more monsters).</summary>
+        bool IsNight { get; }
+
+        /// <summary>Creates the network object for a creature or dropped item; returns its id (0 = failed).</summary>
+        uint SpawnEntity(Gameplay.Entities.ServerEntity entity);
+
+        /// <summary>Copies an entity's position and state to its network object.</summary>
+        void UpdateEntity(Gameplay.Entities.ServerEntity entity);
+
+        void DespawnEntity(uint id);
+
+        /// <summary>Which movement abilities (dash, double jump, hook) a player's motor allows.</summary>
+        void SetMovementAbilities(uint peerId, CharacterMotor.MovementAbilities abilities);
     }
 }

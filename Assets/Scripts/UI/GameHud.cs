@@ -43,6 +43,18 @@ namespace GameUI
 
         public InventoryUI Inventory => _inventoryUI;
 
+        /// <summary>Skill tree and quest log (K / J).</summary>
+        public CharacterScreens Character { get; private set; }
+
+        private Image _damageFlash;
+        private float _damageFlashTimer;
+
+        /// <summary>A short red flash when the player is hurt.</summary>
+        public void FlashDamage()
+        {
+            _damageFlashTimer = 0.35f;
+        }
+
         /// <summary>Creates the HUD for a player's inventory if it does not exist yet.</summary>
         public static GameHud EnsureFor(PlayerInventory inventory)
         {
@@ -75,6 +87,10 @@ namespace GameUI
             var hud = go.AddComponent<GameHud>();
             hud.Build((RectTransform)go.transform);
             hud.Bind(inventory);
+
+            go.AddComponent<PlayerStatusHud>().Build((RectTransform)go.transform);
+            hud.Character = go.AddComponent<CharacterScreens>();
+            hud.Character.Build((RectTransform)go.transform, inventory);
 
             return hud;
         }
@@ -140,14 +156,17 @@ namespace GameUI
 
             // Name of the selected item above the hotbar.
             _itemName = UiBuilder.Text("Item Name", root, 24, TextAlignmentOptions.Center, UiBuilder.TextColor);
-            UiBuilder.Place(_itemName.rectTransform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0, 112), new Vector2(600, 34));
+            UiBuilder.Place(_itemName.rectTransform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0, 150), new Vector2(600, 34));
             UiBuilder.AddOutline(_itemName, new Color(0, 0, 0, 0.7f), 1.5f);
 
             // Controls hint.
             // Bottom right, clear of the hotbar in the middle.
             TextMeshProUGUI hint = UiBuilder.Text("Hint", root, 16, TextAlignmentOptions.BottomRight, new Color(1, 1, 1, 0.55f));
             UiBuilder.Place(hint.rectTransform, new Vector2(1, 0), new Vector2(1, 0), new Vector2(-16, 12), new Vector2(560, 44));
-            hint.text = "LMB break   RMB place   1-9 / wheel hotbar   Tab inventory   Space swim up   Ctrl/C dive";
+            hint.text = "LMB break/attack   RMB place/eat   Q drop   1-9 hotbar   Tab inventory   K skills   J quests";
+
+            _damageFlash = UiBuilder.Image("Damage", root, new Color(0.8f, 0.05f, 0.05f, 0f));
+            UiBuilder.Stretch(_damageFlash.rectTransform);
         }
 
         private void Bind(PlayerInventory inventory)
@@ -263,7 +282,7 @@ namespace GameUI
                 return;
             }
 
-            bool inventoryOpen = _inventoryUI != null && _inventoryUI.IsOpen;
+            bool inventoryOpen = (_inventoryUI != null && _inventoryUI.IsOpen) || (Character != null && Character.IsOpen);
 
             _crosshair.gameObject.SetActive(!inventoryOpen);
             _underwater.enabled = World.Rendering.UnderwaterEffect.CameraUnderwater;
@@ -290,6 +309,9 @@ namespace GameUI
 
             _itemNameTimer -= Time.unscaledDeltaTime;
             _itemName.alpha = Mathf.Clamp01(_itemNameTimer / 0.5f);
+
+            _damageFlashTimer = Mathf.Max(0f, _damageFlashTimer - Time.unscaledDeltaTime);
+            _damageFlash.color = new Color(0.8f, 0.05f, 0.05f, _damageFlashTimer * 0.9f);
 
             _messageTimer -= Time.unscaledDeltaTime;
             _message.alpha = Mathf.Clamp01(_messageTimer / 0.5f);

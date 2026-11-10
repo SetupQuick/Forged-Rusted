@@ -101,6 +101,12 @@ namespace Game
             if (NetworkRuntime.Current == null && UnityEngine.Object.FindFirstObjectByType<NetworkRuntime>() == null)
                 CreateNetworkRuntime();
 
+            // Creatures and dropped items use a prefab built in code; every
+            // machine registers it before the game starts.
+            NetworkWorld networkWorld = UnityEngine.Object.FindFirstObjectByType<NetworkWorld>();
+            if (networkWorld != null)
+                Gameplay.Entities.EntityPrefabs.Register(networkWorld);
+
             WorldManager world = UnityEngine.Object.FindFirstObjectByType<WorldManager>();
 
             if (world == null)

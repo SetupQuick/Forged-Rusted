@@ -77,7 +77,26 @@ namespace Networking
                     break;
 
                 case PlayerActionType.SelectSlot:
+                case PlayerActionType.UseItem:
+                case PlayerActionType.ChooseClass:
+                case PlayerActionType.UnlockSkill:
                     writer.Write(action.Slot);
+                    break;
+
+                case PlayerActionType.UseAbility:
+                    writer.Write(action.Slot);
+                    writer.Write(action.Direction.x);
+                    writer.Write(action.Direction.y);
+                    writer.Write(action.Direction.z);
+                    break;
+
+                case PlayerActionType.Attack:
+                    writer.Write(action.Target);
+                    break;
+
+                case PlayerActionType.DropItem:
+                    writer.Write(action.Slot);
+                    writer.Write(action.Button);
                     break;
             }
         }
@@ -115,7 +134,26 @@ namespace Networking
                         break;
 
                     case PlayerActionType.SelectSlot:
+                    case PlayerActionType.UseItem:
+                    case PlayerActionType.ChooseClass:
+                    case PlayerActionType.UnlockSkill:
                         action.Slot = reader.ReadByte();
+                        break;
+
+                    case PlayerActionType.UseAbility:
+                        action.Slot = reader.ReadByte();
+                        action.Direction = new Vector3(reader.ReadFloat(), reader.ReadFloat(), reader.ReadFloat());
+                        if (float.IsNaN(action.Direction.x) || float.IsNaN(action.Direction.y) || float.IsNaN(action.Direction.z))
+                            return false;
+                        break;
+
+                    case PlayerActionType.Attack:
+                        action.Target = reader.ReadUInt32();
+                        break;
+
+                    case PlayerActionType.DropItem:
+                        action.Slot = reader.ReadByte();
+                        action.Button = reader.ReadByte();
                         break;
 
                     default:
@@ -290,6 +328,57 @@ namespace Networking
                        !double.IsNaN(worldSeconds) && !double.IsInfinity(worldSeconds) && worldSeconds >= 0 &&
                        dayLengthSeconds >= 10f && dayLengthSeconds < 1e6f &&
                        startTimeOfDay >= 0f && startTimeOfDay <= 1f;
+            }
+            catch (System.InvalidOperationException)
+            {
+                return false;
+            }
+        }
+
+        // --------------------------------------------------------------
+        // Player status (server -> owner): health and more, when it changes
+        // --------------------------------------------------------------
+
+        public static void WriteStatus(PacketWriter writer, PlayerStatus status)
+        {
+            writer.Write(status.Health);
+            writer.Write(status.MaxHealth);
+            writer.Write(status.Dead);
+            writer.Write(status.RespawnSeconds);
+            writer.Write(status.Mana);
+            writer.Write(status.MaxMana);
+            writer.Write(status.Level);
+            writer.Write(status.Experience);
+            writer.Write(status.ExperienceToNext);
+            writer.Write(status.SkillPoints);
+            writer.Write(status.ClassId ?? string.Empty);
+            writer.Write(status.UnlockedSkills ?? string.Empty);
+            writer.Write(status.Invisible);
+            writer.Write(status.QuestState ?? string.Empty);
+        }
+
+        public static bool TryReadStatus(byte[] payload, out PlayerStatus status)
+        {
+            status = default;
+
+            try
+            {
+                var reader = new PacketReader(payload);
+                status.Health = reader.ReadFloat();
+                status.MaxHealth = reader.ReadFloat();
+                status.Dead = reader.ReadBool();
+                status.RespawnSeconds = reader.ReadFloat();
+                status.Mana = reader.ReadFloat();
+                status.MaxMana = reader.ReadFloat();
+                status.Level = reader.ReadInt32();
+                status.Experience = reader.ReadInt32();
+                status.ExperienceToNext = reader.ReadInt32();
+                status.SkillPoints = reader.ReadInt32();
+                status.ClassId = reader.ReadString();
+                status.UnlockedSkills = reader.ReadString();
+                status.Invisible = reader.ReadBool();
+                status.QuestState = reader.ReadString();
+                return reader.Remaining == 0;
             }
             catch (System.InvalidOperationException)
             {

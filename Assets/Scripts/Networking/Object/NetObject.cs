@@ -21,6 +21,15 @@ namespace Networking
 
         public ushort PrefabId => prefabId;
 
+        /// <summary>Gives a prefab built in code its id (only once, before registering it).</summary>
+        public void AssignRuntimePrefabId(ushort id)
+        {
+            if (prefabId != 0 && prefabId != id)
+                throw new InvalidOperationException($"{name} already has prefab id {prefabId}.");
+
+            prefabId = id;
+        }
+
         public uint NetworkId
         {
             get;

@@ -41,6 +41,11 @@ namespace Networking
         private float _yaw;
         private float _pitch;
 
+        // Like jump: an ability key press is repeated for a few ticks so a
+        // lost packet cannot swallow it (the motor detects the new press).
+        private int _dashSendTicks;
+        private int _grappleSendTicks;
+
         private int _jumpSendTicks;
         private bool _active;
 
@@ -245,12 +250,25 @@ namespace Networking
                     PlayerInputButtons.Crouch;
             }
 
+            if (_dashSendTicks > 0)
+            {
+                buttons |= PlayerInputButtons.Dash;
+                _dashSendTicks--;
+            }
+
+            if (_grappleSendTicks > 0)
+            {
+                buttons |= PlayerInputButtons.Grapple;
+                _grappleSendTicks--;
+            }
+
             return new PlayerInputMessage(
                 networkId,
                 inputSequence,
                 _moveAction.ReadValue<Vector2>(),
                 _yaw,
-                buttons);
+                buttons,
+                _pitch);
         }
 
         private void Update()
@@ -265,6 +283,16 @@ namespace Networking
 
             if (_jumpAction.WasPressedThisFrame())
                 _jumpSendTicks = 3;
+
+            UnityEngine.InputSystem.Keyboard keyboard = UnityEngine.InputSystem.Keyboard.current;
+            if (keyboard != null)
+            {
+                if (keyboard.fKey.wasPressedThisFrame)
+                    _dashSendTicks = 3;
+
+                if (keyboard.gKey.wasPressedThisFrame)
+                    _grappleSendTicks = 3;
+            }
 
             Vector2 look =
                 _lookAction.ReadValue<Vector2>();

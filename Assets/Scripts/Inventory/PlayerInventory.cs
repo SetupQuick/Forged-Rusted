@@ -153,6 +153,9 @@ namespace Items
             if (GetComponent<FirstPersonArms>() == null)
                 gameObject.AddComponent<FirstPersonArms>();
 
+            if (GetComponent<PlayerAbilities>() == null)
+                gameObject.AddComponent<PlayerAbilities>();
+
             GameHud.EnsureFor(this);
         }
 
@@ -191,6 +194,51 @@ namespace Items
 
             return Perform(action);
         }
+
+        // ------------------------------------------------------------
+        // Combat, items on the ground, classes and abilities
+        // ------------------------------------------------------------
+
+        /// <summary>Plays the hand swing without an action (e.g. attacking).</summary>
+        public void NotifySwing() => ActionPerformed?.Invoke(PlayerActionType.Attack);
+
+        /// <summary>Hits a creature (by its network id).</summary>
+        public void AttackEntity(uint networkId)
+        {
+            if (networkId != 0)
+                Perform(PlayerAction.AttackEntity(networkId));
+        }
+
+        /// <summary>Drops one item (or the whole stack) from a slot on the ground.</summary>
+        public void DropFromSlot(int slot, bool wholeStack)
+        {
+            if (Container == null || slot < 0 || slot >= Container.Count || Container[slot].IsEmpty)
+                return;
+
+            if (!IsNetworked)
+            {
+                GameHud.Instance?.ShowMessage("Dropping items needs a game (Host Game).");
+                return;
+            }
+
+            Perform(PlayerAction.Drop(slot, wholeStack));
+        }
+
+        /// <summary>Eats the selected item if it is food.</summary>
+        public void UseSelected()
+        {
+            ItemStack stack = SelectedStack;
+            if (stack.IsEmpty || stack.Item.healAmount <= 0f)
+                return;
+
+            Perform(PlayerAction.Use(SelectedSlot));
+        }
+
+        public void ChooseClass(int classIndex) => Perform(PlayerAction.PickClass(classIndex));
+
+        public void UnlockSkill(int skillIndex) => Perform(PlayerAction.Unlock(skillIndex));
+
+        public void UseAbility(AbilityCode ability, Vector3 direction) => Perform(PlayerAction.Ability(ability, direction));
 
         /// <summary>Tells the server we started hitting a block (it times the break).</summary>
         public void StartBreaking(Vector3Int voxel)
@@ -265,6 +313,11 @@ namespace Items
                 case PlayerActionType.PlaceBlock:
                     if (InventoryLogic.TryGetPlaceableBlock(Container, action.Slot, out _))
                         InventoryLogic.ConsumeForPlace(Container, action.Slot);
+                    break;
+
+                case PlayerActionType.DropItem:
+                    if (action.Slot < Container.Count && !Container[action.Slot].IsEmpty)
+                        Container.RemoveFromSlot(action.Slot, action.Button == 1 ? Container[action.Slot].Count : 1);
                     break;
             }
 
@@ -341,6 +394,10 @@ namespace Items
         private void HandleHotbarInput()
         {
             Keyboard keyboard = Keyboard.current;
+
+            // Q drops one of the held item, Ctrl+Q the whole stack.
+            if (keyboard != null && keyboard.qKey.wasPressedThisFrame)
+                DropFromSlot(SelectedSlot, keyboard.leftCtrlKey.isPressed || keyboard.rightCtrlKey.isPressed);
 
             if (keyboard != null)
             {

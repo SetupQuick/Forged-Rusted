@@ -72,6 +72,46 @@ namespace Networking
             _router.Register(NetworkMessageType.InventorySnapshot, OnInventorySnapshot);
             _router.Register(NetworkMessageType.Equipment, OnEquipment);
             _router.Register(NetworkMessageType.TimeSync, OnTimeSync);
+            _router.Register(NetworkMessageType.PlayerStatus, OnStatus);
+            _router.Register(NetworkMessageType.PlayerEffects, OnEffects);
+        }
+
+        /// <summary>This player's health, mana, level, class, skills and quests (from the server).</summary>
+        public PlayerStatus Status { get; private set; }
+        public bool HasStatus { get; private set; }
+        public event Action<PlayerStatus> StatusChanged;
+
+        private readonly HashSet<uint> _invisible = new HashSet<uint>();
+
+        /// <summary>Whether another player is invisible (their model is hidden).</summary>
+        public bool IsInvisible(uint peerId) => _invisible.Contains(peerId);
+
+        private void OnStatus(byte[] payload)
+        {
+            if (!GameplayMessages.TryReadStatus(payload, out PlayerStatus status))
+                return;
+
+            Status = status;
+            HasStatus = true;
+            StatusChanged?.Invoke(status);
+        }
+
+        private void OnEffects(byte[] payload)
+        {
+            try
+            {
+                var reader = new PacketReader(payload);
+                uint peerId = reader.ReadUInt32();
+                bool invisible = reader.ReadBool();
+
+                if (invisible)
+                    _invisible.Add(peerId);
+                else
+                    _invisible.Remove(peerId);
+            }
+            catch (InvalidOperationException)
+            {
+            }
         }
 
         private void OnTimeSync(byte[] payload)
@@ -161,6 +201,8 @@ namespace Networking
             _router.Unregister(NetworkMessageType.InventorySnapshot, OnInventorySnapshot);
             _router.Unregister(NetworkMessageType.Equipment, OnEquipment);
             _router.Unregister(NetworkMessageType.TimeSync, OnTimeSync);
+            _router.Unregister(NetworkMessageType.PlayerStatus, OnStatus);
+            _router.Unregister(NetworkMessageType.PlayerEffects, OnEffects);
         }
 
         private void OnBlockChanged(byte[] payload)

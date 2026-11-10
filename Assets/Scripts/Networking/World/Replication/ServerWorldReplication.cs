@@ -420,29 +420,32 @@ namespace Networking
                  * Remote player presentation is handled by
                  * NetTransform like any other network object.
                  */
-                if (!netObject.TryGetBehaviour(
-                        NetBehaviourType.Transform,
-                        out NetBehaviour
-                            transformBehaviour))
-                {
-                    continue;
-                }
-
                 uint minimumInterval = SendInterval(anchor, netObject);
 
-                if (!ShouldSendBehaviour(
-                        peerState,
-                        netObject,
-                        transformBehaviour,
-                        serverTick,
-                        minimumInterval))
+                // Position, plus creature/item data (kind, health, ...) when it changed.
+                for (int b = 0; b < ReplicatedTypes.Length; b++)
                 {
-                    continue;
-                }
+                    if (!netObject.TryGetBehaviour(
+                            ReplicatedTypes[b],
+                            out NetBehaviour behaviour))
+                    {
+                        continue;
+                    }
 
-                _candidates.Add((
-                    new SnapshotEntry(netObject, transformBehaviour),
-                    peerState.TicksSinceSent(netObject, transformBehaviour, serverTick)));
+                    if (!ShouldSendBehaviour(
+                            peerState,
+                            netObject,
+                            behaviour,
+                            serverTick,
+                            ReplicatedTypes[b] == NetBehaviourType.Transform ? minimumInterval : 1u))
+                    {
+                        continue;
+                    }
+
+                    _candidates.Add((
+                        new SnapshotEntry(netObject, behaviour),
+                        peerState.TicksSinceSent(netObject, behaviour, serverTick)));
+                }
             }
 
             // Longest-waiting first, so nothing starves when more updates
@@ -456,6 +459,12 @@ namespace Networking
             for (int index = 0; index < count; index++)
                 _snapshotEntries.Add(_candidates[index].Entry);
         }
+
+        private static readonly NetBehaviourType[] ReplicatedTypes =
+        {
+            NetBehaviourType.Transform,
+            NetBehaviourType.Entity
+        };
 
         private static readonly Comparison<(SnapshotEntry Entry, uint Waited)> LongestWaitingFirst =
             (a, b) => b.Waited.CompareTo(a.Waited);
@@ -495,10 +504,16 @@ namespace Networking
                         TransformRefreshIntervalTicks,
                         minimumIntervalTicks);
 
-                /*
-                 * Future replicated behaviours can add
-                 * their own policy here.
-                 */
+                // Creature/item data: when it changed, refreshed now and then
+                // (covers packet loss), like transforms.
+                case NetBehaviourType.Entity:
+                    return peerState.ShouldSend(
+                        netObject,
+                        behaviour,
+                        serverTick,
+                        TransformRefreshIntervalTicks * 4,
+                        minimumIntervalTicks);
+
                 default:
                     return true;
             }

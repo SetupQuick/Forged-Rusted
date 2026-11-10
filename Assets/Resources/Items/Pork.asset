@@ -16,3 +16,4 @@ MonoBehaviour:
   icon: {fileID: 0}
   description: 
   maxStackSize: 64
+  healAmount: 6

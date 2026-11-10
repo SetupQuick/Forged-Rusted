@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 using World;
 using World.Blocks;
@@ -258,7 +259,13 @@ namespace Networking
                 localMovement *
                 speed;
 
-            if (swimming)
+            bool hooked = ApplyMovementAbilities(message, ref horizontalVelocity, deltaTime);
+
+            if (hooked)
+            {
+                // The grappling hook sets the velocity; no gravity this tick.
+            }
+            else if (swimming)
             {
                 UpdateSwimmingVelocity(
                     message,
@@ -283,6 +290,8 @@ namespace Networking
                 _verticalVelocity -=
                     gravity *
                     deltaTime;
+
+                ApplyDoubleJump(message);
             }
 
             Vector3 velocity =
@@ -305,6 +314,162 @@ namespace Networking
             }
 
             WasGrounded = _controller.isGrounded;
+        }
+
+        // ------------------------------------------------------------
+        // Skill tree movement: dash, double jump, grappling hook.
+        // Timed in input sequence numbers (not clocks), so re-simulating
+        // inputs after a server correction replays them identically.
+        // ------------------------------------------------------------
+
+        [Flags]
+        public enum MovementAbilities
+        {
+            None = 0,
+            Dash = 1,
+            DoubleJump = 2,
+            Grapple = 4
+        }
+
+        /// <summary>Unlocked abilities (server: from progress; client: from PlayerStatus).</summary>
+        public MovementAbilities Abilities { get; set; }
+
+        public const float DashSpeed = 16f;
+        public const float DashSeconds = 0.18f;
+        public const float DashCooldown = 1.2f;
+        public const float GrappleRange = 30f;
+        public const float GrappleSpeed = 16f;
+        public const float GrappleMaxSeconds = 2.5f;
+
+        private uint _lastDashFlag, _lastGrappleFlag, _lastJumpFlag;
+        private uint _dashSequence, _doubleJumpSequence, _groundSequence, _grappleSequence;
+        private Vector3 _dashDirection;
+        private bool _jumpFresh;
+        private Vector3 _grapplePoint;
+
+        /// <summary>The grappling hook is pulling (for the rope visual).</summary>
+        public bool IsGrappling { get; private set; }
+        public Vector3 GrapplePoint => _grapplePoint;
+
+        private static uint Ticks(float seconds, float deltaTime) =>
+            (uint)Mathf.CeilToInt(seconds / Mathf.Max(deltaTime, 0.001f));
+
+        /// <summary>True on the first tick of a press (the flag is repeated for a few ticks).</summary>
+        private static bool NewPress(bool flag, uint sequence, ref uint lastFlagSequence)
+        {
+            if (!flag)
+                return false;
+
+            bool fresh = lastFlagSequence + 1 != sequence && lastFlagSequence != sequence;
+            lastFlagSequence = sequence;
+            return fresh;
+        }
+
+        /// <summary>
+        /// Applies dash and grappling hook to this tick's velocity. Returns
+        /// true when the hook drives all movement (no gravity this tick).
+        /// </summary>
+        private bool ApplyMovementAbilities(PlayerInputMessage message, ref Vector3 horizontalVelocity, float deltaTime)
+        {
+            uint sequence = message.InputSequence;
+
+            if (_controller.isGrounded)
+                _groundSequence = sequence;
+
+            // Track jump presses every tick (the flag repeats for a few
+            // ticks); only a new press in mid-air is a double jump.
+            _jumpFresh = NewPress(message.Jump, sequence, ref _lastJumpFlag);
+
+            // Dash: a short burst in the movement direction (or forward).
+            bool dashPress = NewPress(message.Dash, sequence, ref _lastDashFlag);
+            if ((Abilities & MovementAbilities.Dash) != 0 && dashPress &&
+                (_dashSequence == 0 || sequence - _dashSequence >= Ticks(DashCooldown, deltaTime)))
+            {
+                _dashSequence = sequence;
+                Vector3 direction = horizontalVelocity.sqrMagnitude > 0.01f
+                    ? horizontalVelocity.normalized
+                    : transform.rotation * Vector3.forward;
+                _dashDirection = new Vector3(direction.x, 0f, direction.z).normalized;
+            }
+
+            if (_dashSequence != 0 && sequence >= _dashSequence && sequence - _dashSequence < Ticks(DashSeconds, deltaTime))
+                horizontalVelocity = _dashDirection * DashSpeed;
+
+            // Grappling hook: aim at a block within range, then get pulled to it.
+            bool grapplePress = NewPress(message.Grapple, sequence, ref _lastGrappleFlag);
+            if ((Abilities & MovementAbilities.Grapple) != 0 && grapplePress)
+            {
+                if (IsGrappling)
+                {
+                    IsGrappling = false; // press again to let go
+                }
+                else if (TryFindGrapplePoint(message, out Vector3 point))
+                {
+                    _grappleSequence = sequence;
+                    _grapplePoint = point;
+                    IsGrappling = true;
+                }
+            }
+
+            if (IsGrappling)
+            {
+                Vector3 chest = transform.position + Vector3.up * 1f;
+                Vector3 to = _grapplePoint - chest;
+
+                if (to.magnitude < 1.2f || sequence - _grappleSequence > Ticks(GrappleMaxSeconds, deltaTime) ||
+                    (message.Jump && sequence != _grappleSequence))
+                {
+                    IsGrappling = false;
+                }
+                else
+                {
+                    Vector3 pull = to.normalized * GrappleSpeed;
+                    horizontalVelocity = new Vector3(pull.x, 0f, pull.z);
+                    _verticalVelocity = pull.y;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>Double jump: a second jump in mid-air until touching the ground again.</summary>
+        private void ApplyDoubleJump(PlayerInputMessage message)
+        {
+            uint sequence = message.InputSequence;
+
+            if ((Abilities & MovementAbilities.DoubleJump) == 0 || !_jumpFresh)
+                return;
+
+            if (_doubleJumpSequence <= _groundSequence || sequence == _doubleJumpSequence)
+            {
+                _doubleJumpSequence = sequence;
+                _verticalVelocity = jumpSpeed;
+            }
+        }
+
+        private bool TryFindGrapplePoint(PlayerInputMessage message, out Vector3 point)
+        {
+            point = default;
+            World.WorldManager world = World.WorldManager.Active;
+            if (world == null || !world.IsReady)
+                return false;
+
+            Vector3 eye = transform.position + Vector3.up * (_controller.height - 0.2f);
+            Vector3 direction = Quaternion.Euler(message.Pitch, message.Yaw, 0f) * Vector3.forward;
+
+            if (!Gameplay.VoxelRaycast.Cast(eye, direction, GrappleRange, world.VoxelSize,
+                    (x, y, z) => world.TryGetLoadedBlock(x, y, z, out World.Blocks.BlockId b) ? b : World.Blocks.BlockId.Air,
+                    out Gameplay.VoxelHit hit) ||
+                !World.Blocks.BlockRegistry.IsSolid(hit.Block))
+            {
+                return false;
+            }
+
+            float size = world.VoxelSize;
+            point = new Vector3((hit.Voxel.x + 0.5f) * size, (hit.Voxel.y + 0.5f) * size, (hit.Voxel.z + 0.5f) * size)
+                    + (Vector3)hit.Normal * (size * 0.5f);
+            return true;
         }
 
         /// <summary>On the ground after the last simulated tick.</summary>

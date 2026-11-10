@@ -12,7 +12,32 @@ namespace Gameplay
         SelectSlot = 5,
 
         // Started hitting a block (the server times the break from here).
-        StartBreak = 6
+        StartBreak = 6,
+
+        // Hit a creature (Target = its network id).
+        Attack = 7,
+
+        // Drop the stack in Slot on the ground (Button 1 = whole stack, 0 = one item).
+        DropItem = 8,
+
+        // Use the item in Slot (eat food).
+        UseItem = 9,
+
+        // Pick a class (Slot = index in ClassDefinitions.All), once.
+        ChooseClass = 10,
+
+        // Unlock a skill (Slot = index in the class's skill list).
+        UnlockSkill = 11,
+
+        // Use a server-side ability (Slot = AbilityCode), aimed along Direction.
+        UseAbility = 12
+    }
+
+    /// <summary>Abilities triggered through UseAbility (movement ones go through the motor input).</summary>
+    public enum AbilityCode : byte
+    {
+        Invisibility = 1,
+        Fireball = 2
     }
 
     /// <summary>
@@ -35,6 +60,12 @@ namespace Gameplay
 
         /// <summary>Voxel position for break/place.</summary>
         public Vector3Int Position;
+
+        /// <summary>Network id of the creature for Attack.</summary>
+        public uint Target;
+
+        /// <summary>Aim direction for UseAbility (normalised).</summary>
+        public Vector3 Direction;
 
         /// <summary>
         /// Client-side only, not sent: the block that was broken or placed
@@ -63,6 +94,44 @@ namespace Gameplay
         {
             Type = PlayerActionType.StartBreak,
             Position = position
+        };
+
+        public static PlayerAction AttackEntity(uint networkId) => new PlayerAction
+        {
+            Type = PlayerActionType.Attack,
+            Target = networkId
+        };
+
+        public static PlayerAction Drop(int slot, bool wholeStack) => new PlayerAction
+        {
+            Type = PlayerActionType.DropItem,
+            Slot = (byte)slot,
+            Button = (byte)(wholeStack ? 1 : 0)
+        };
+
+        public static PlayerAction Use(int slot) => new PlayerAction
+        {
+            Type = PlayerActionType.UseItem,
+            Slot = (byte)slot
+        };
+
+        public static PlayerAction PickClass(int classIndex) => new PlayerAction
+        {
+            Type = PlayerActionType.ChooseClass,
+            Slot = (byte)classIndex
+        };
+
+        public static PlayerAction Unlock(int skillIndex) => new PlayerAction
+        {
+            Type = PlayerActionType.UnlockSkill,
+            Slot = (byte)skillIndex
+        };
+
+        public static PlayerAction Ability(AbilityCode ability, Vector3 direction) => new PlayerAction
+        {
+            Type = PlayerActionType.UseAbility,
+            Slot = (byte)ability,
+            Direction = direction
         };
 
         public static PlayerAction Select(int hotbarSlot) => new PlayerAction

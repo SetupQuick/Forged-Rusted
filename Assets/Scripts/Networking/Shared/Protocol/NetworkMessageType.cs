@@ -39,6 +39,12 @@ namespace Networking
         TimeSync = 19,
 
         // Client -> server: persistent player id and name (for saved inventories).
-        PlayerProfile = 20
+        PlayerProfile = 20,
+
+        // Server -> owner: health, mana, level, class, skills, quests.
+        PlayerStatus = 21,
+
+        // Server -> clients: visible effects of a player (invisible).
+        PlayerEffects = 22
     }
 }

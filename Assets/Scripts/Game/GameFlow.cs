@@ -228,7 +228,7 @@ namespace Game
                 return;
             }
 
-            if (keyboard != null && keyboard.escapeKey.wasPressedThisFrame && !InventoryUI.EscapeHandledThisFrame)
+            if (keyboard != null && keyboard.escapeKey.wasPressedThisFrame && !InventoryUI.EscapeHandledThisFrame && !CharacterScreens.EscapeHandledThisFrame)
                 OnEscape();
 
             if (_state == State.MainMenu || _state == State.Connecting || PlayerInventory.Local == null)

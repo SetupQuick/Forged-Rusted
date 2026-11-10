@@ -168,6 +168,24 @@ namespace Networking
             _audio.volume = local ? 0.55f : 1f;
         }
 
+        private bool _hiddenByInvisibility;
+
+        /// <summary>Other players who used Invisibility are not drawn (their shadow neither).</summary>
+        private void UpdateInvisibility()
+        {
+            if (_isLocal || _root == null || _netObject == null)
+                return;
+
+            ClientGameplayModule gameplay = NetworkRuntime.Current != null ? NetworkRuntime.Current.ClientGameplay : null;
+            bool hidden = gameplay != null && gameplay.IsInvisible(_netObject.OwnerPeerId);
+
+            if (hidden != _hiddenByInvisibility)
+            {
+                _hiddenByInvisibility = hidden;
+                _root.gameObject.SetActive(!hidden);
+            }
+        }
+
         private void LateUpdate()
         {
             if (!_built)
@@ -195,6 +213,7 @@ namespace Networking
             _airTime = airborne ? _airTime + dt : 0f;
 
             UpdateHeldItem(swimming);
+            UpdateInvisibility();
             Animate(dt, speed, swimming, airborne && _airTime > 0.08f, crouch);
             PlaySounds(dt, speed, swimming, airborne);
         }
