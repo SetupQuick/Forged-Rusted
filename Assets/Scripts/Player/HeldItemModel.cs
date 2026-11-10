@@ -37,7 +37,10 @@ namespace Networking
                 model = new GameObject("Held " + item.DisplayName);
                 model.transform.SetParent(parent, false);
 
-                ChunkMeshData data = item.placesBlock ? BlockCube(item.block) : Tile(item.Id);
+                string[] shape = ItemShapes.For(item);
+                ChunkMeshData data = item.placesBlock ? BlockCube(item.block)
+                    : shape != null ? Shape(shape, item)
+                    : Tile(item.Id);
 
                 var mesh = new Mesh { name = model.name };
                 mesh.SetVertices(data.Vertices);
@@ -96,6 +99,38 @@ namespace Networking
         }
 
         /// <summary>A flat coloured tile for items without a model.</summary>
+        /// <summary>
+        /// An ItemShapes pattern as a flat stack of voxels (like the icon,
+        /// but 3D). The bottom-left end of the handle sits at the pivot,
+        /// which is the grip point of the hand.
+        /// </summary>
+        public static ChunkMeshData Shape(string[] shape, ItemData item)
+        {
+            var mesh = new ChunkMeshData();
+            int grid = ItemShapes.GridSize;
+            float p = BlockSize * 1.6f / grid;     // tools are a bit longer than a block
+            float thickness = p;
+
+            // Grip around pixel (1, 10) - near the handle end.
+            float gripX = 1.5f * p, gripY = (grid - 10.5f) * p;
+
+            for (int gy = 0; gy < grid; gy++)
+            for (int gx = 0; gx < grid; gx++)
+            {
+                char c = shape[gy][gx];
+                if (c == '.')
+                    continue;
+
+                Color32 color = ItemShapes.ColorOf(c, item);
+                var origin = new Vector3(gx * p - gripX, (grid - 1 - gy) * p - gripY, -thickness * 0.5f);
+
+                for (int f = 0; f < 6; f++)
+                    AddBoxFace(mesh, f, origin, new Vector3(p, p, thickness), color);
+            }
+
+            return mesh;
+        }
+
         public static ChunkMeshData Tile(string id)
         {
             uint hash = 2166136261;

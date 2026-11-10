@@ -29,6 +29,15 @@ namespace Gameplay
         /// <summary>The voxel the player is looking at, if any.</summary>
         public bool HasTarget { get; private set; }
 
+        /// <summary>0..1 while holding the button on a block (for the HUD and crack overlay).</summary>
+        public float BreakProgress { get; private set; }
+
+        /// <summary>Seconds the current block takes with the held tool (0 = instant).</summary>
+        public float BreakSeconds { get; private set; }
+
+        private Vector3Int _breakingVoxel;
+        private bool _breaking;
+
         public VoxelHit Target { get; private set; }
 
         private void Awake()
@@ -39,6 +48,11 @@ namespace Gameplay
 
         private void OnDestroy()
         {
+            if (_crack != null)
+                Destroy(_crack);
+            if (_crackMaterial != null)
+                Destroy(_crackMaterial);
+
             if (_outline != null)
                 Destroy(_outline);
         }
@@ -50,6 +64,8 @@ namespace Gameplay
             if (world == null || !world.IsReady || _inventory == null || PlayerInputReader.GameplayInputBlocked)
             {
                 SetTarget(false, default, world);
+                StopBreaking();
+                UpdateCrack(world);
                 return;
             }
 
@@ -70,6 +86,7 @@ namespace Gameplay
                 out VoxelHit hit);
 
             SetTarget(hasHit, hit, world);
+            UpdateCrack(world);
 
             _breakCooldown -= Time.deltaTime;
             _placeCooldown -= Time.deltaTime;
@@ -79,22 +96,110 @@ namespace Gameplay
             if (mouse == null || !HasTarget)
                 return;
 
-            if (mouse.leftButton.wasPressedThisFrame)
-                _breakCooldown = 0f;
-
             if (mouse.rightButton.wasPressedThisFrame)
                 _placeCooldown = 0f;
 
             if (mouse.leftButton.isPressed && _breakCooldown <= 0f)
             {
-                _breakCooldown = BlockEditRules.RepeatInterval;
-                _inventory.TryBreak(Target.Voxel);
+                UpdateBreaking(Target);
             }
-            else if (mouse.rightButton.isPressed && _placeCooldown <= 0f)
+            else
+            {
+                StopBreaking();
+            }
+
+            if (!mouse.leftButton.isPressed && mouse.rightButton.isPressed && _placeCooldown <= 0f)
             {
                 _placeCooldown = BlockEditRules.RepeatInterval;
                 TryPlace(world);
             }
+        }
+
+        /// <summary>
+        /// Holding the button fills the progress for the block under the
+        /// cursor; looking at another block starts over. The time comes
+        /// from Gameplay.Mining (block hardness and the held tool).
+        /// </summary>
+        private void UpdateBreaking(VoxelHit target)
+        {
+            ItemData tool = _inventory.SelectedStack.Item;
+            float seconds = Mining.BreakSeconds(target.Block, tool);
+
+            if (seconds < 0f || !BlockEditRules.CanBreak(target.Block))
+            {
+                StopBreaking();
+                return;
+            }
+
+            if (!_breaking || target.Voxel != _breakingVoxel)
+            {
+                _breaking = true;
+                _breakingVoxel = target.Voxel;
+                BreakProgress = 0f;
+
+                if (seconds > 0f)
+                    _inventory.StartBreaking(target.Voxel);
+            }
+
+            BreakSeconds = seconds;
+            BreakProgress = seconds <= 0f ? 1f : Mathf.Min(1f, BreakProgress + Time.deltaTime / seconds);
+
+            if (BreakProgress >= 1f)
+            {
+                _inventory.TryBreak(target.Voxel);
+                StopBreaking();
+
+                // A short pause before the next block, like swinging again.
+                _breakCooldown = seconds <= 0f ? BlockEditRules.RepeatInterval : 0.15f;
+            }
+        }
+
+        private GameObject _crack;
+        private Material _crackMaterial;
+        private static readonly int ColorId = Shader.PropertyToID("_Color");
+
+        /// <summary>The block darkens as it breaks (a stand-in for crack textures).</summary>
+        private void UpdateCrack(WorldManager world)
+        {
+            bool show = _breaking && BreakProgress > 0f && world != null;
+
+            if (!show)
+            {
+                if (_crack != null && _crack.activeSelf)
+                    _crack.SetActive(false);
+                return;
+            }
+
+            if (_crack == null)
+            {
+                _crack = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                _crack.name = "Break Progress";
+                Destroy(_crack.GetComponent<Collider>());
+
+                Material highlight = Resources.Load<Material>("World/HighlightMaterial");
+                _crackMaterial = highlight != null ? new Material(highlight) : null;
+                Renderer renderer = _crack.GetComponent<Renderer>();
+                renderer.sharedMaterial = _crackMaterial;
+                renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            }
+
+            float size = world.VoxelSize;
+            _crack.SetActive(true);
+            _crack.transform.position = new Vector3((_breakingVoxel.x + 0.5f) * size, (_breakingVoxel.y + 0.5f) * size, (_breakingVoxel.z + 0.5f) * size);
+            _crack.transform.localScale = Vector3.one * (size * 1.004f);
+
+            if (_crackMaterial != null)
+            {
+                // Steps like cracks spreading, not a smooth fade.
+                float stage = Mathf.Ceil(BreakProgress * 8f) / 8f;
+                _crackMaterial.SetColor(ColorId, new Color(0f, 0f, 0f, stage * 0.55f));
+            }
+        }
+
+        private void StopBreaking()
+        {
+            _breaking = false;
+            BreakProgress = 0f;
         }
 
         private void TryPlace(WorldManager world)

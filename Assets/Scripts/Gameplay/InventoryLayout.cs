@@ -27,8 +27,20 @@ namespace Gameplay
             return new InventoryContainer(SlotCount, HotbarSize);
         }
 
+        /// <summary>Test tools in the first hotbar slots (until crafting exists).</summary>
+        public static bool GiveStarterTools = true;
+
         public static void AddStarterItems(InventoryContainer container)
         {
+            if (GiveStarterTools)
+            {
+                foreach (ToolType type in new[] { ToolType.Sword, ToolType.Pickaxe, ToolType.Axe, ToolType.Shovel })
+                {
+                    if (ItemDatabase.TryGet(GameItems.ToolId("stone", type), out ItemData tool))
+                        container.Add(tool, 1);
+                }
+            }
+
             if (!GiveStarterBlocks)
                 return;
 

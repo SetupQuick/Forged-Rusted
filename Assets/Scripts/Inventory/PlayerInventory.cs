@@ -187,8 +187,19 @@ namespace Items
 
             PlayerAction action = PlayerAction.Break(voxel);
             action.PredictedBlock = block;
+            action.Slot = (byte)SelectedSlot; // client-side: which tool broke it (for the drop)
 
             return Perform(action);
+        }
+
+        /// <summary>Tells the server we started hitting a block (it times the break).</summary>
+        public void StartBreaking(Vector3Int voxel)
+        {
+            if (Container == null)
+                return;
+
+            PlayerAction action = PlayerAction.StartBreaking(voxel);
+            Perform(action);
         }
 
         /// <summary>Places the selected hotbar block at a voxel. Returns false if not allowed.</summary>
@@ -248,7 +259,7 @@ namespace Items
                     break;
 
                 case PlayerActionType.BreakBlock:
-                    InventoryLogic.AddDrop(Container, action.PredictedBlock);
+                    InventoryLogic.AddDrop(Container, action.PredictedBlock, Container[action.Slot].Item);
                     break;
 
                 case PlayerActionType.PlaceBlock:

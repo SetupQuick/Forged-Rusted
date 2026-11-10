@@ -12,6 +12,15 @@ namespace Items
     /// created automatically for every placeable block.
     /// </summary>
     [CreateAssetMenu(fileName = "New Item", menuName = "Inventory/Item")]
+    public enum ToolType : byte
+    {
+        None = 0,
+        Pickaxe = 1,
+        Axe = 2,
+        Shovel = 3,
+        Sword = 4
+    }
+
     public class ItemData : ScriptableObject
     {
         [Tooltip("Unique id used in saves and network messages. " +
@@ -35,6 +44,28 @@ namespace Items
                  "grip point. When empty, blocks show a small cube and " +
                  "other items a coloured tile.")]
         public GameObject heldPrefab;
+
+        [Header("Tool / weapon")]
+        [Tooltip("Which blocks this tool is good at (see Gameplay.Mining).")]
+        public ToolType toolType;
+
+        [Tooltip("Material tier: 0 hand, 1 wood, 2 stone, 3 iron, 4 gold+. " +
+                 "Harder ores need a higher tier to drop anything.")]
+        [Range(0, 5)]
+        public int toolTier;
+
+        [Tooltip("Mining speed multiplier on matching blocks (hand = 1).")]
+        [Min(1f)]
+        public float toolSpeed = 1f;
+
+        [Tooltip("Damage per hit to creatures (hand = 1).")]
+        [Min(0f)]
+        public float attackDamage = 1f;
+
+        [Header("Food")]
+        [Tooltip("Health restored when eaten (0 = not food).")]
+        [Min(0f)]
+        public float healAmount;
 
         [Header("Block")]
         [Tooltip("Placing this item puts a block into the world.")]

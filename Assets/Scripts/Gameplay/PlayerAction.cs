@@ -9,7 +9,10 @@ namespace Gameplay
         InventoryClose = 2,
         BreakBlock = 3,
         PlaceBlock = 4,
-        SelectSlot = 5
+        SelectSlot = 5,
+
+        // Started hitting a block (the server times the break from here).
+        StartBreak = 6
     }
 
     /// <summary>
@@ -53,6 +56,12 @@ namespace Gameplay
         public static PlayerAction Break(Vector3Int position) => new PlayerAction
         {
             Type = PlayerActionType.BreakBlock,
+            Position = position
+        };
+
+        public static PlayerAction StartBreaking(Vector3Int position) => new PlayerAction
+        {
+            Type = PlayerActionType.StartBreak,
             Position = position
         };
 

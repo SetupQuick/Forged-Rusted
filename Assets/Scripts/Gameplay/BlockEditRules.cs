@@ -20,7 +20,7 @@ namespace Gameplay
 
         public static bool CanBreak(BlockId block)
         {
-            return BlockRegistry.Get(block).IsBreakable;
+            return BlockRegistry.Get(block).IsBreakable && Mining.Get(block).Hardness >= 0f;
         }
 
         /// <summary>Whether a block can be placed into a cell holding this block.</summary>

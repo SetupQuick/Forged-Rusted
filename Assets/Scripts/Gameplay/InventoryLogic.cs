@@ -62,9 +62,15 @@ namespace Gameplay
             container.RemoveFromSlot(slot, 1);
         }
 
-        /// <summary>Adds what a broken block drops.</summary>
-        public static void AddDrop(InventoryContainer container, BlockId broken)
+        /// <summary>
+        /// Adds what a broken block drops straight into the inventory -
+        /// nothing if the held item cannot harvest it (stone by hand).
+        /// </summary>
+        public static void AddDrop(InventoryContainer container, BlockId broken, ItemData heldTool)
         {
+            if (!Mining.CanHarvest(broken, heldTool))
+                return;
+
             BlockId drop = BlockEditRules.DropFor(broken);
 
             if (drop == BlockId.Air)

@@ -67,6 +67,7 @@ namespace Networking
                     break;
 
                 case PlayerActionType.BreakBlock:
+                case PlayerActionType.StartBreak:
                     WritePosition(writer, action.Position);
                     break;
 
@@ -104,6 +105,7 @@ namespace Networking
                         break;
 
                     case PlayerActionType.BreakBlock:
+                    case PlayerActionType.StartBreak:
                         action.Position = ReadPosition(reader);
                         break;
 

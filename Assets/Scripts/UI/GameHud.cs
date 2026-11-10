@@ -30,6 +30,8 @@ namespace GameUI
         private InventoryUI _inventoryUI;
 
         private RectTransform _crosshair;
+        private Image _breakBack;
+        private Image _breakFill;
         private Image _underwater;
         private TextMeshProUGUI _itemName;
         private TextMeshProUGUI _prompt;
@@ -118,6 +120,13 @@ namespace GameUI
             Image vertical = UiBuilder.Image("V", _crosshair, new Color(1, 1, 1, 0.9f));
             UiBuilder.Place(vertical.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(3, 22));
             UiBuilder.AddOutline(vertical, new Color(0, 0, 0, 0.5f), 1f);
+
+            // Break progress under the crosshair.
+            _breakBack = UiBuilder.Image("Break Progress", root, new Color(0f, 0f, 0f, 0.55f));
+            UiBuilder.Place(_breakBack.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -26f), new Vector2(64f, 6f));
+            _breakFill = UiBuilder.Image("Fill", _breakBack.rectTransform, new Color(1f, 0.85f, 0.4f, 0.95f));
+            UiBuilder.Place(_breakFill.rectTransform, new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(1f, 0f), new Vector2(0f, 4f));
+            _breakBack.gameObject.SetActive(false);
 
             // Pickup prompt under the crosshair.
             _prompt = UiBuilder.Text("Prompt", root, 24, TextAlignmentOptions.Center, UiBuilder.TextColor);
@@ -261,6 +270,12 @@ namespace GameUI
 
             if (_interaction == null)
                 _interaction = _inventory.GetComponent<Gameplay.BlockInteraction>();
+
+            bool breaking = !inventoryOpen && _interaction != null && _interaction.BreakProgress > 0f && _interaction.BreakSeconds > 0.15f;
+            if (_breakBack.gameObject.activeSelf != breaking)
+                _breakBack.gameObject.SetActive(breaking);
+            if (breaking)
+                _breakFill.rectTransform.sizeDelta = new Vector2(62f * _interaction.BreakProgress, 4f);
 
             PickupItem target = _inventory.PickupTarget;
 

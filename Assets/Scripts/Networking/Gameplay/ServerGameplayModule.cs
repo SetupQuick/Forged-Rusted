@@ -48,6 +48,10 @@ namespace Networking
 
         private sealed class PlayerState
         {
+            // Block being hit and when that started (server time), for break timing.
+            public Vector3Int BreakingVoxel;
+            public double BreakingSince = -1;
+
             // Persistent identity (from PlayerProfile); null until received.
             public string ProfileId;
             public string ProfileName;
@@ -66,6 +70,12 @@ namespace Networking
             public List<BlockChange> EditBacklog;
             public int EditBacklogIndex;
         }
+
+        // Server time of the current tick (seconds).
+        private double _now;
+
+        /// <summary>Breaks refused because they were faster than the tool allows.</summary>
+        public int TooFastBreaks { get; private set; }
 
         /// <summary>Number of actions rejected (for diagnostics and tests).</summary>
         public int RejectedActions { get; private set; }
@@ -189,6 +199,8 @@ namespace Networking
         {
             if (_disposed)
                 return;
+
+            _now = now;
 
             if (!_subscribedToWorld)
             {
@@ -374,6 +386,11 @@ namespace Networking
                     InventoryLogic.Close(state.Inventory, ref state.Held);
                     break;
 
+                case PlayerActionType.StartBreak:
+                    state.BreakingVoxel = action.Position;
+                    state.BreakingSince = _now;
+                    break;
+
                 case PlayerActionType.BreakBlock:
                     if (!TryBreak(state, action.Position))
                         Reject(state, action.Position);
@@ -401,8 +418,24 @@ namespace Networking
             if (!BlockEditRules.CanBreak(block))
                 return false;
 
+            // Too fast for this block and tool: not allowed (cheat or lag).
+            ItemData tool = state.Inventory[state.SelectedSlot].Item;
+            float required = Mining.BreakSeconds(block, tool);
+
+            if (required > 0f)
+            {
+                double elapsed = state.BreakingVoxel == voxel && state.BreakingSince >= 0 ? _now - state.BreakingSince : 0;
+
+                if (elapsed + Mining.ServerLatencyAllowance < required * Mining.ServerTimeTolerance)
+                {
+                    TooFastBreaks++;
+                    return false;
+                }
+            }
+
+            state.BreakingSince = -1;
             _world.SetBlock(voxel, BlockId.Air);
-            InventoryLogic.AddDrop(state.Inventory, block);
+            InventoryLogic.AddDrop(state.Inventory, block, tool);
             return true;
         }
 

@@ -88,6 +88,13 @@ namespace Items
                     _blockItems.Add(item.block, item);
             }
 
+            // Built-in items (tools); an asset with the same id wins.
+            foreach (ItemData item in GameItems.CreateAll())
+            {
+                if (!_items.ContainsKey(item.Id))
+                    _items.Add(item.Id, item);
+            }
+
             foreach (BlockId block in System.Enum.GetValues(typeof(BlockId)))
             {
                 if (!IsHoldable(block) || _blockItems.ContainsKey(block))

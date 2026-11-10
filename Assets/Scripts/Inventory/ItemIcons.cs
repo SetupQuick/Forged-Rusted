@@ -28,9 +28,10 @@ namespace Items
             if (Cache.TryGetValue(item.Id, out Sprite cached) && cached != null)
                 return cached;
 
+            string[] shape = ItemShapes.For(item);
             Texture2D texture = item.placesBlock
                 ? DrawBlock(item.block)
-                : DrawTile(item.Id);
+                : shape != null ? DrawShape(shape, item) : DrawTile(item.Id);
 
             texture.name = "Icon_" + item.Id;
 
@@ -105,6 +106,43 @@ namespace Items
                     Color c = color.Value;
                     c.a = 1f;
                     pixels[x + y * Size] = c;
+                }
+            }
+
+            texture.SetPixels32(pixels);
+            texture.Apply(false, false);
+            return texture;
+        }
+
+        /// <summary>Pixel-art icon from an ItemShapes pattern, with a dark outline.</summary>
+        private static Texture2D DrawShape(string[] shape, ItemData item)
+        {
+            Texture2D texture = NewTexture();
+            int grid = ItemShapes.GridSize;
+            int scale = (Size - 4) / grid;
+            int offset = (Size - grid * scale) / 2;
+            var pixels = new Color32[Size * Size];
+            var outline = new Color32(20, 16, 12, 230);
+
+            bool Filled(int gx, int gy) =>
+                gx >= 0 && gy >= 0 && gx < grid && gy < grid && shape[gy][gx] != '.';
+
+            for (int gy = 0; gy < grid; gy++)
+            for (int gx = 0; gx < grid; gx++)
+            {
+                Color32 color = Filled(gx, gy) ? ItemShapes.ColorOf(shape[gy][gx], item) : default;
+                bool edge = !Filled(gx, gy) &&
+                            (Filled(gx - 1, gy) || Filled(gx + 1, gy) || Filled(gx, gy - 1) || Filled(gx, gy + 1));
+
+                if (color.a == 0 && !edge)
+                    continue;
+
+                for (int py = 0; py < scale; py++)
+                for (int px = 0; px < scale; px++)
+                {
+                    int x = offset + gx * scale + px;
+                    int y = Size - 1 - (offset + gy * scale + py); // row 0 at the top
+                    pixels[x + y * Size] = color.a == 0 ? outline : color;
                 }
             }
 
