@@ -70,8 +70,12 @@ dash, double jump, grappling hook, fireball, invisibility.
 saved with the world.
 
 Dash, double jump and the hook run inside the movement code
-(`CharacterMotor`), timed in input sequence numbers so client prediction
-replays them exactly; fireball and invisibility run on the server.
+(`CharacterMotor`), timed in input sequence numbers. Their state (last
+presses, dash and double-jump timers, hook point) is part of the
+movement state the server sends back (`MovementAbilityState`, only once
+an ability has been used), so after a server correction the client
+replays them exactly the same way - no rubber-banding on a dash under
+lag. Fireball and invisibility run on the server.
 
 ## Chests
 
@@ -79,10 +83,18 @@ New block `Chest`. Contents are kept by the server per position, shown
 to everyone who has the chest open, closed when you walk away, spilled
 on the ground when the chest is broken, and saved with the world.
 
+Chest clicks are predicted like inventory clicks: shown at once, then
+checked against the server. The server's inventory snapshot carries the
+open chest's contents at the same acknowledged action, so the client
+resets both to the server's state and re-applies its own clicks the
+server has not seen yet. When another player changes the chest, every
+player looking into it gets a new snapshot the same way.
+
 ## Versions
 
-* Network protocol 12 (player status/effects, chest contents, new
-  actions, input with pitch and ability buttons).
+* Network protocol 13 (12: player status/effects, chest contents, new
+  actions, input with pitch and ability buttons; 13: ability state in
+  movement corrections, chest contents in inventory snapshots).
 * Save format 3 (2: player progress, 3: chests). Older saves load.
 
 ## Not done / known limits
@@ -90,8 +102,4 @@ on the ground when the chest is broken, and saved with the world.
 * Not yet run in the Unity editor - needs a test on the PC.
 * Creatures do not path-find (they walk straight and hop one block) and
   do not collide with players.
-* Ability state (dash/hook) is not part of the movement correction
-  state; under heavy lag a dash can be corrected slightly.
-* Chest clicks are not predicted (they show after the server answers -
-  milliseconds on a LAN).
 * No tool durability, no crafting (planned with your own recipes).

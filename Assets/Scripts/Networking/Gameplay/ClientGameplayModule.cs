@@ -56,6 +56,10 @@ namespace Networking
         public ItemStack[] LastSlots { get; private set; }
         public ItemStack LastHeld { get; private set; }
 
+        /// <summary>The open chest in the last snapshot (null: none open).</summary>
+        public ItemStack[] LastChestSlots { get; private set; }
+        public Vector3Int LastChestPosition { get; private set; }
+
         public ClientGameplayModule(
             GameClient client,
             ClientMessageRouter router,
@@ -256,10 +260,15 @@ namespace Networking
                     out uint acknowledged,
                     out int hotbarSize,
                     out ItemStack[] slots,
-                    out ItemStack held))
+                    out ItemStack held,
+                    out ItemStack[] chestSlots,
+                    out Vector3Int chestPosition))
             {
                 return;
             }
+
+            LastChestSlots = chestSlots;
+            LastChestPosition = chestPosition;
 
             HasSnapshot = true;
             LastAcknowledged = acknowledged;

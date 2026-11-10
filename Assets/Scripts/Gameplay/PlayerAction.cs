@@ -82,12 +82,6 @@ namespace Gameplay
         public byte[] Slots;
 
         /// <summary>
-        /// Client-side only, not sent: the client did not apply this action
-        /// itself (chest actions - the server's snapshots show the result).
-        /// </summary>
-        public bool NotPredicted;
-
-        /// <summary>
         /// Client-side only, not sent: the block that was broken or placed
         /// when the action was predicted, for re-applying it after a
         /// server correction.

@@ -233,6 +233,10 @@ namespace Networking
 
             FlushBroadcasts();
 
+            // Before the inventory flush: chest changes mark their viewers'
+            // inventories dirty, so they go out this tick.
+            TickChests();
+
             foreach (PlayerState state in _players.Values)
             {
                 SendEditBacklog(state);
@@ -244,7 +248,6 @@ namespace Networking
             }
 
             TickSurvival((float)deltaTime);
-            TickChests();
 
             if (now >= _nextTimeSync)
             {
@@ -674,7 +677,8 @@ namespace Networking
             bool sent = _server.Send(
                 state.Peer,
                 NetworkMessageType.InventorySnapshot,
-                writer => GameplayMessages.WriteInventory(writer, state.LastSequence, state.Inventory, state.Held),
+                writer => GameplayMessages.WriteInventory(
+                    writer, state.LastSequence, state.Inventory, state.Held, OpenChestOf(state), state.ChestPosition),
                 NetworkDelivery.ReliableOrdered);
 
             if (sent)

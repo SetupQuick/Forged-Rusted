@@ -179,7 +179,10 @@ namespace Networking
                 return;
 
             CharacterMotorState state = motor.CaptureState();
-            motor.RestoreState(new CharacterMotorState(feet, state.Rotation, 0f, state.ControllerHeight));
+            // Let go of a grappling hook (it would pull back to the old spot).
+            MovementAbilityState abilities = state.AbilityState;
+            abilities.Grappling = false;
+            motor.RestoreState(new CharacterMotorState(feet, state.Rotation, 0f, state.ControllerHeight, abilities));
         }
 
         public Vector3 SpawnPoint =>

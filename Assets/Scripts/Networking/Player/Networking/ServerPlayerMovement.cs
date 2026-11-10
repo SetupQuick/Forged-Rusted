@@ -296,7 +296,9 @@ namespace Networking
                     motorState.Position,
                     motorState.Rotation,
                     motorState.VerticalVelocity,
-                    motorState.ControllerHeight);
+                    motorState.ControllerHeight,
+                    motorState.AbilityState,
+                    !motorState.AbilityState.IsEmpty);
 
             _server.Send(
                 state.Peer,

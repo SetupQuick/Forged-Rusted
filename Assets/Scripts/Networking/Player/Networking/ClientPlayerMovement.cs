@@ -344,11 +344,7 @@ namespace Networking
              * Go back to the authoritative state.
              */
             _predictedMotor.RestoreState(
-                new CharacterMotorState(
-                    state.Position,
-                    state.Rotation,
-                    state.VerticalVelocity,
-                    state.ControllerHeight));
+                state.ToMotorState());
 
             /*
              * Then replay everything the server has not

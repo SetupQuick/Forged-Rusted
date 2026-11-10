@@ -238,7 +238,9 @@ namespace Networking
             PacketWriter writer,
             uint acknowledgedSequence,
             InventoryContainer container,
-            ItemStack held)
+            ItemStack held,
+            InventoryContainer chest = null,
+            Vector3Int chestPosition = default)
         {
             writer.Write(acknowledgedSequence);
             writer.Write((byte)container.Count);
@@ -248,6 +250,17 @@ namespace Networking
                 WriteStack(writer, container[i]);
 
             WriteStack(writer, held);
+
+            // The open chest, at the same acknowledged sequence, so the
+            // client can reconcile its predicted chest clicks too.
+            writer.Write(chest != null);
+            if (chest == null)
+                return;
+
+            WritePosition(writer, chestPosition);
+            writer.Write((byte)chest.Count);
+            for (int i = 0; i < chest.Count; i++)
+                WriteStack(writer, chest[i]);
         }
 
         public static bool TryReadInventory(
@@ -257,10 +270,25 @@ namespace Networking
             out ItemStack[] slots,
             out ItemStack held)
         {
+            return TryReadInventory(payload, out acknowledgedSequence, out hotbarSize, out slots, out held, out _, out _);
+        }
+
+        /// <param name="chestSlots">The open chest's contents, or null when no chest is open.</param>
+        public static bool TryReadInventory(
+            byte[] payload,
+            out uint acknowledgedSequence,
+            out int hotbarSize,
+            out ItemStack[] slots,
+            out ItemStack held,
+            out ItemStack[] chestSlots,
+            out Vector3Int chestPosition)
+        {
             acknowledgedSequence = 0;
             hotbarSize = 0;
             slots = null;
             held = ItemStack.Empty;
+            chestSlots = null;
+            chestPosition = default;
 
             try
             {
@@ -276,6 +304,15 @@ namespace Networking
                     slots[i] = ReadStack(reader);
 
                 held = ReadStack(reader);
+
+                if (reader.ReadBool())
+                {
+                    chestPosition = ReadPosition(reader);
+                    int chestCount = reader.ReadByte();
+                    chestSlots = new ItemStack[chestCount];
+                    for (int i = 0; i < chestCount; i++)
+                        chestSlots[i] = ReadStack(reader);
+                }
 
                 return reader.Remaining == 0;
             }

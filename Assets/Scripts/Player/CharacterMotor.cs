@@ -15,17 +15,60 @@ namespace Networking
 
         public float ControllerHeight { get; }
 
+        /// <summary>Dash / double jump / grappling hook timers (see <see cref="HasAbilityState"/>).</summary>
+        public MovementAbilityState AbilityState { get; }
+
+        /// <summary>
+        /// false: RestoreState keeps the motor's current ability state
+        /// (teleports); true: it is replaced too (reconciliation).
+        /// </summary>
+        public bool HasAbilityState { get; }
+
         public CharacterMotorState(
             Vector3 position,
             Quaternion rotation,
             float verticalVelocity,
             float controllerHeight)
+            : this(position, rotation, verticalVelocity, controllerHeight, default, false)
+        {
+        }
+
+        public CharacterMotorState(
+            Vector3 position,
+            Quaternion rotation,
+            float verticalVelocity,
+            float controllerHeight,
+            MovementAbilityState abilityState,
+            bool hasAbilityState = true)
         {
             Position = position;
             Rotation = rotation;
             VerticalVelocity = verticalVelocity;
             ControllerHeight = controllerHeight;
+            AbilityState = abilityState;
+            HasAbilityState = hasAbilityState;
         }
+    }
+
+    /// <summary>
+    /// The movement-ability part of the motor state. All timers are input
+    /// sequence numbers, so the server and the predicting client agree on
+    /// them exactly and a replay after a correction gives the same dash,
+    /// double jump and grapple as the server.
+    /// </summary>
+    public struct MovementAbilityState
+    {
+        public uint LastDashFlag, LastGrappleFlag, LastJumpFlag;
+        public uint DashSequence, DoubleJumpSequence, GroundSequence, GrappleSequence;
+        public Vector3 DashDirection;
+        public Vector3 GrapplePoint;
+        public bool Grappling;
+
+        /// <summary>Nothing has happened yet (no need to send it).</summary>
+        public bool IsEmpty =>
+            LastDashFlag == 0 && LastGrappleFlag == 0 && LastJumpFlag == 0 &&
+            DashSequence == 0 && DoubleJumpSequence == 0 && GroundSequence == 0 &&
+            GrappleSequence == 0 && !Grappling;
     }
 
     /// <summary>
@@ -517,7 +560,39 @@ namespace Networking
                 transform.position,
                 transform.rotation,
                 _verticalVelocity,
-                _controller.height);
+                _controller.height,
+                CaptureAbilityState());
+        }
+
+        public MovementAbilityState CaptureAbilityState()
+        {
+            return new MovementAbilityState
+            {
+                LastDashFlag = _lastDashFlag,
+                LastGrappleFlag = _lastGrappleFlag,
+                LastJumpFlag = _lastJumpFlag,
+                DashSequence = _dashSequence,
+                DoubleJumpSequence = _doubleJumpSequence,
+                GroundSequence = _groundSequence,
+                GrappleSequence = _grappleSequence,
+                DashDirection = _dashDirection,
+                GrapplePoint = _grapplePoint,
+                Grappling = IsGrappling,
+            };
+        }
+
+        public void RestoreAbilityState(MovementAbilityState state)
+        {
+            _lastDashFlag = state.LastDashFlag;
+            _lastGrappleFlag = state.LastGrappleFlag;
+            _lastJumpFlag = state.LastJumpFlag;
+            _dashSequence = state.DashSequence;
+            _doubleJumpSequence = state.DoubleJumpSequence;
+            _groundSequence = state.GroundSequence;
+            _grappleSequence = state.GrappleSequence;
+            _dashDirection = state.DashDirection;
+            _grapplePoint = state.GrapplePoint;
+            IsGrappling = state.Grappling;
         }
 
         public void RestoreState(
@@ -552,6 +627,9 @@ namespace Networking
 
             _verticalVelocity =
                 state.VerticalVelocity;
+
+            if (state.HasAbilityState)
+                RestoreAbilityState(state.AbilityState);
         }
 
         // ------------------------------------------------------------

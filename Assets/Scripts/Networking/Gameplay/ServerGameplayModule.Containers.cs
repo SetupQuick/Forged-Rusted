@@ -23,6 +23,10 @@ namespace Networking
         public InventoryContainer GetChest(Vector3Int position) =>
             _chests.TryGetValue(position, out InventoryContainer chest) ? chest : null;
 
+        /// <summary>Whether a player has a chest window open (tests).</summary>
+        public bool IsChestOpen(uint peerId) =>
+            _players.TryGetValue(peerId, out PlayerState state) && state.ChestOpen;
+
         private InventoryContainer OpenChestOf(PlayerState state) =>
             state.ChestOpen && _chests.TryGetValue(state.ChestPosition, out InventoryContainer chest) ? chest : null;
 
@@ -49,6 +53,7 @@ namespace Networking
             state.ChestOpen = true;
             state.ChestPosition = position;
             SendChest(state, chest);
+            state.InventoryDirty = true;
         }
 
         private void CloseChest(PlayerState state, bool notify)
@@ -94,15 +99,12 @@ namespace Networking
             if (_dirtyChests.Count == 0)
                 return;
 
-            foreach (Vector3Int position in _dirtyChests)
-            {
-                if (!_chests.TryGetValue(position, out InventoryContainer chest))
-                    continue;
-
-                foreach (PlayerState state in _players.Values)
-                    if (state.ChestOpen && state.ChestPosition == position)
-                        SendChest(state, chest);
-            }
+            // Everyone looking into a changed chest gets a new inventory
+            // snapshot (it carries the chest, see SendInventory). For the
+            // player who clicked, that is the acknowledgement anyway.
+            foreach (PlayerState state in _players.Values)
+                if (state.ChestOpen && _dirtyChests.Contains(state.ChestPosition))
+                    state.InventoryDirty = true;
 
             _dirtyChests.Clear();
         }

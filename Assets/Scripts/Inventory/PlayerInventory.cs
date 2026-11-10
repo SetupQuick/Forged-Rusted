@@ -225,13 +225,12 @@ namespace Items
         }
 
         /// <summary>
-        /// Inventory actions are predicted (applied at once) except while a
-        /// chest is open: then the server's snapshots show the result
-        /// (a few milliseconds later on a LAN).
+        /// Inventory and chest actions are predicted: applied at once, then
+        /// reconciled with the server's snapshot (which carries the open
+        /// chest at the same acknowledged sequence, see OnSnapshot).
         /// </summary>
         private void PerformInventory(PlayerAction action)
         {
-            action.NotPredicted = Chest != null;
             Perform(action);
         }
 
@@ -382,17 +381,16 @@ namespace Items
             return true;
         }
 
-        private void ApplyInventoryEffect(PlayerAction action)
-        {
-            if (action.NotPredicted)
-                return;
+        private void ApplyInventoryEffect(PlayerAction action) => ApplyInventoryEffect(action, Chest);
 
+        private void ApplyInventoryEffect(PlayerAction action, InventoryContainer chest)
+        {
             ItemStack heldBefore = _held;
 
             switch (action.Type)
             {
                 case PlayerActionType.InventoryClick:
-                    ContainerLogic.Click(Container, null, ref _held, action.Slot, action.Button, action.Shift);
+                    ContainerLogic.Click(Container, chest, ref _held, action.Slot, action.Button, action.Shift);
                     break;
 
                 case PlayerActionType.InventorySpread:
@@ -400,15 +398,20 @@ namespace Items
                     if (action.Slots != null)
                         foreach (byte slot in action.Slots)
                             slots.Add(slot);
-                    ContainerLogic.Spread(Container, null, ref _held, slots, action.Button == 1);
+                    ContainerLogic.Spread(Container, chest, ref _held, slots, action.Button == 1);
                     break;
 
                 case PlayerActionType.InventoryCollect:
-                    ContainerLogic.Collect(Container, null, ref _held, action.Slot);
+                    ContainerLogic.Collect(Container, chest, ref _held, action.Slot);
                     break;
 
                 case PlayerActionType.InventorySwap:
-                    ContainerLogic.SwapWithHotbar(Container, null, action.Slot, action.Button);
+                    ContainerLogic.SwapWithHotbar(Container, chest, action.Slot, action.Button);
+                    break;
+
+                case PlayerActionType.ContainerCommand:
+                    if (chest != null)
+                        ContainerLogic.RunCommand(Container, chest, (ContainerLogic.Command)action.Button);
                     break;
 
                 case PlayerActionType.DropHeld:
@@ -468,12 +471,24 @@ namespace Items
             Container.SetAll(slots, notify: false);
             _held = held;
 
+            // The open chest too (the snapshot has it at the same sequence).
+            // Without one in the snapshot the server's close message follows.
+            ItemStack[] chestSlots = _network?.LastChestSlots;
+            bool chestSynced = Chest != null && chestSlots != null &&
+                               _network.LastChestPosition == ChestPosition && Chest.Count == chestSlots.Length;
+            if (chestSynced)
+                Chest.SetAll(chestSlots, notify: false);
+
             _pending.RemoveAll(action => action.Sequence <= acknowledged);
 
+            // A chest the snapshot did not reset must not get the pending
+            // clicks applied a second time.
             foreach (PlayerAction action in _pending)
-                ApplyInventoryEffect(action);
+                ApplyInventoryEffect(action, chestSynced ? Chest : null);
 
             Container.NotifyChanged();
+            if (chestSynced)
+                Chest.NotifyChanged();
             HeldChanged?.Invoke();
         }
 

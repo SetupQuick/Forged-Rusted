@@ -16,10 +16,20 @@ namespace Networking
          *   Rotation: 4
          *   VerticalVelocity: 1
          *   ControllerHeight: 1
+         *
+         * Optional ability block (only once the player has used a
+         * movement ability, so most states stay small):
+         *   7 uints (flag / timer sequences), dash direction x z,
+         *   grapple point xyz, 1 byte grappling.
          */
         public const int PayloadSize =
             (sizeof(uint) * 3) +
             (sizeof(float) * 9);
+
+        public const int AbilityBlockSize =
+            (sizeof(uint) * 7) +
+            (sizeof(float) * 5) +
+            1;
 
         public uint NetworkId { get; }
 
@@ -38,6 +48,10 @@ namespace Networking
 
         public float ControllerHeight { get; }
 
+        public bool HasAbilityState { get; }
+
+        public MovementAbilityState AbilityState { get; }
+
         public PlayerMovementStateMessage(
             uint networkId,
             uint serverTick,
@@ -45,8 +59,16 @@ namespace Networking
             Vector3 position,
             Quaternion rotation,
             float verticalVelocity,
-            float controllerHeight)
+            float controllerHeight,
+            MovementAbilityState abilityState = default,
+            bool hasAbilityState = false)
         {
+            AbilityState =
+                abilityState;
+
+            HasAbilityState =
+                hasAbilityState;
+
             NetworkId =
                 networkId;
 
@@ -101,7 +123,35 @@ namespace Networking
 
             writer.Write(
                 ControllerHeight);
+
+            if (!HasAbilityState)
+                return;
+
+            MovementAbilityState a = AbilityState;
+            writer.Write(a.LastDashFlag);
+            writer.Write(a.LastGrappleFlag);
+            writer.Write(a.LastJumpFlag);
+            writer.Write(a.DashSequence);
+            writer.Write(a.DoubleJumpSequence);
+            writer.Write(a.GroundSequence);
+            writer.Write(a.GrappleSequence);
+            writer.Write(a.DashDirection.x);
+            writer.Write(a.DashDirection.z);
+            writer.Write(a.GrapplePoint.x);
+            writer.Write(a.GrapplePoint.y);
+            writer.Write(a.GrapplePoint.z);
+            writer.Write((byte)(a.Grappling ? 1 : 0));
         }
+
+        /// <summary>The motor state this message describes.</summary>
+        public CharacterMotorState ToMotorState() =>
+            new CharacterMotorState(
+                Position,
+                Rotation,
+                VerticalVelocity,
+                ControllerHeight,
+                AbilityState,
+                hasAbilityState: true); // absent block = nothing used yet (all zero)
 
         public static bool TryRead(
             byte[] data,
@@ -110,7 +160,8 @@ namespace Networking
             message = default;
 
             if (data == null ||
-                data.Length != PayloadSize)
+                (data.Length != PayloadSize &&
+                 data.Length != PayloadSize + AbilityBlockSize))
             {
                 return false;
             }
@@ -148,6 +199,36 @@ namespace Networking
                 float controllerHeight =
                     reader.ReadFloat();
 
+                bool hasAbilities =
+                    reader.Remaining == AbilityBlockSize;
+
+                MovementAbilityState abilities = default;
+
+                if (hasAbilities)
+                {
+                    abilities.LastDashFlag = reader.ReadUInt32();
+                    abilities.LastGrappleFlag = reader.ReadUInt32();
+                    abilities.LastJumpFlag = reader.ReadUInt32();
+                    abilities.DashSequence = reader.ReadUInt32();
+                    abilities.DoubleJumpSequence = reader.ReadUInt32();
+                    abilities.GroundSequence = reader.ReadUInt32();
+                    abilities.GrappleSequence = reader.ReadUInt32();
+                    float dashX = reader.ReadFloat();
+                    float dashZ = reader.ReadFloat();
+                    abilities.DashDirection = new Vector3(dashX, 0f, dashZ);
+                    abilities.GrapplePoint = new Vector3(
+                        reader.ReadFloat(),
+                        reader.ReadFloat(),
+                        reader.ReadFloat());
+                    abilities.Grappling = reader.ReadByte() != 0;
+
+                    if (!IsFinite(abilities.DashDirection) ||
+                        !IsFinite(abilities.GrapplePoint))
+                    {
+                        return false;
+                    }
+                }
+
                 if (reader.Remaining != 0)
                     return false;
 
@@ -182,7 +263,9 @@ namespace Networking
                         position,
                         rotation.normalized,
                         verticalVelocity,
-                        controllerHeight);
+                        controllerHeight,
+                        abilities,
+                        hasAbilities);
 
                 return true;
             }
