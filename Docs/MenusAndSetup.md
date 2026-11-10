@@ -2,19 +2,33 @@
 
 ## Opening the project
 
-Nothing has to be assigned by hand.
+Everything is already assigned in the main scene; nothing has to be
+dragged in by hand.
 
-1. Open the project in Unity 6000.4.5f1 (the version in
-   `ProjectSettings/ProjectVersion.txt`). Make sure Git LFS pulled the
-   scenes (`git lfs pull`), otherwise `.unity` files are tiny text stubs.
-2. Open `Assets/Scenes/Network.unity` (the scene in the build list).
-3. Optional but recommended: menu **Forged & Rusted > Check Current Scene**.
-   If anything is missing, **Forged & Rusted > Set Up Current Scene** adds
-   and wires it (network runtime, player prefab, world, chunk streamer,
-   sun), then save the scene.
+1. Get the project with Git LFS enabled. GitHub Desktop does this by
+   itself; on the command line run `git lfs install` once, then clone (or
+   `git lfs pull` in an existing clone). Without LFS the `.unity` scene
+   files are tiny text stubs and Unity shows empty scenes.
+2. In Unity Hub: **Add > Add project from disk**, pick the folder, open it
+   with Unity **6000.4.5f1** (the version in
+   `ProjectSettings/ProjectVersion.txt`). The first import takes a few
+   minutes (Unity downloads the packages).
+3. The main scene **`Assets/Scenes/Game.unity`** opens automatically the
+   first time (or menu **Forged & Rusted > Open Game Scene**). It is the
+   first scene in File > Build Profiles. It contains:
+   * **Network** - NetworkWorld (prefab registry
+     `Resources/Network/DefaultNetPrefabRegistry`), NetworkRuntime,
+     PeerSpawnExample (player prefab `Resources/Network/NetworkPlayer`);
+   * **World** - WorldManager (`Resources/World/DefaultWorldSettings`,
+     chunk and water materials), ChunkStreamer;
+   * **Sun** - directional light (the day/night cycle drives it).
 4. Press Play. The main menu appears over a generated world.
 
-Even without step 3 the game completes the scene at runtime
+`Assets/Scenes/Network.unity` is the networking test scene. It spawns the
+bare `PlayerTest` prefab (no inventory, HUD or building) - the main menu
+shows a red warning there. Use `Game.unity` to play.
+
+If a scene is missing parts, the game completes it at runtime
 (`Game/GameBootstrap`): it adds a NetworkRuntime (with the player prefab
 from `Resources/Network`), a WorldManager (with
 `Resources/World/DefaultWorldSettings`) and a ChunkStreamer if they are
