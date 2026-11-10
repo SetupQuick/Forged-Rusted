@@ -97,11 +97,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e4ffdeff55bd6d6418823df1ebae29af, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerInventory
-  maxSlots: 20
   playerCamera: {fileID: 5704869307436424196}
-  interactionPromptUI: {fileID: 0}
-  promptText: {fileID: 0}
-  items: []
 --- !u!114 &2147628819814141841
 MonoBehaviour:
   m_ObjectHideFlags: 0

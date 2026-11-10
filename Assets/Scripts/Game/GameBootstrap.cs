@@ -115,6 +115,16 @@ namespace Game
 
             if (world != null && UnityEngine.Object.FindFirstObjectByType<ChunkStreamer>() == null)
                 world.gameObject.AddComponent<ChunkStreamer>();
+
+            // Old test scenes spawn a bare test player: no inventory means
+            // no HUD, hotbar, hands or building. Say so instead of failing silently.
+            PeerSpawnExample spawner = UnityEngine.Object.FindFirstObjectByType<PeerSpawnExample>();
+            if (spawner != null && spawner.PlayerPrefab != null &&
+                spawner.PlayerPrefab.GetComponent<Items.PlayerInventory>() == null)
+            {
+                Problem($"This scene spawns \"{spawner.PlayerPrefab.name}\", which has no PlayerInventory " +
+                        "(no HUD, hotbar or building). Play Assets/Scenes/Game.unity instead.");
+            }
         }
 
         private static void CreateNetworkRuntime()
