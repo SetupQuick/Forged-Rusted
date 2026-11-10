@@ -33,12 +33,16 @@ namespace World.Saving
         private long _savedChangeCount;
         private int _savedPlayersVersion = -1;
         private Dictionary<string, PlayerSaveData> _lastPlayers;
+        private Dictionary<Vector3Int, List<(string ItemId, int Count)>> _lastChests;
 
         public string WorldName { get; private set; }
         public string FilePath { get; private set; }
 
         /// <summary>Returns the players to save (id -> data). Set by the game.</summary>
         public Func<Dictionary<string, PlayerSaveData>> CollectPlayers { get; set; }
+
+        /// <summary>Returns the chests to save. Set by the game.</summary>
+        public Func<Dictionary<Vector3Int, List<(string ItemId, int Count)>>> CollectChests { get; set; }
 
         /// <summary>Changes whenever player data changed (for "is there anything to save").</summary>
         public Func<int> PlayersVersion { get; set; }
@@ -80,6 +84,7 @@ namespace World.Saving
             {
                 Loaded = data;
                 _lastPlayers = data.Players;
+                _lastChests = data.Chests;
                 world.LoadSave(data);
                 message = $"Loaded world \"{WorldName}\" ({data.EditCount} changed blocks, {data.Players.Count} players)" +
                           (error != null ? $" - {error}" : string.Empty);
@@ -88,6 +93,7 @@ namespace World.Saving
             {
                 Loaded = null;
                 _lastPlayers = null;
+                _lastChests = null;
                 world.StartNewWorld();
 
                 message = File.Exists(FilePath)
@@ -150,6 +156,11 @@ namespace World.Saving
             else if (Loaded != null)
                 data.Players = Loaded.Players; // keep players we cannot see right now
 
+            if (_lastChests != null)
+                data.Chests = _lastChests;
+            else if (Loaded != null)
+                data.Chests = Loaded.Chests;
+
             _savedChangeCount = _world.ChangeCount;
             _savedPlayersVersion = PlayersVersion?.Invoke() ?? -1;
             string path = FilePath;
@@ -183,6 +194,10 @@ namespace World.Saving
                 Dictionary<string, PlayerSaveData> players = CollectPlayers?.Invoke();
                 if (players != null)
                     _lastPlayers = players;
+
+                Dictionary<Vector3Int, List<(string ItemId, int Count)>> chests = CollectChests?.Invoke();
+                if (chests != null)
+                    _lastChests = chests;
             }
             catch (Exception exception)
             {

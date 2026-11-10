@@ -46,6 +46,9 @@ namespace World.Blocks
         FlowerYellow = 27,
         FlowerBlue = 28,
         FlowerWhite = 29,
-        DryGrass = 30
+        DryGrass = 30,
+
+        // Storage (opens a chest window; contents kept by the server).
+        Chest = 31
     }
 }

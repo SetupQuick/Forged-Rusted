@@ -58,6 +58,7 @@ namespace Gameplay
                 case BlockId.Log:
                 case BlockId.PineLog: return Info(2f, ToolType.Axe);
                 case BlockId.Cactus: return Info(0.4f, ToolType.Axe);
+                case BlockId.Chest: return Info(1.2f, ToolType.Axe);
 
                 case BlockId.Leaves:
                 case BlockId.PineLeaves:

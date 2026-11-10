@@ -10,11 +10,17 @@ using UnityEngine.UI;
 namespace GameUI
 {
     /// <summary>
-    /// The inventory screen (Tab or I to open, Esc to close).
+    /// The inventory screen (Tab or I to open, Esc to close), and the
+    /// chest window (right-click a chest).
     ///
     ///   left click        pick up / put down / swap / merge a stack
     ///   right click       pick up half / put down one
-    ///   shift + click     move between hotbar and backpack
+    ///   shift + click     quick move: chest <-> inventory, else hotbar <-> backpack
+    ///   drag a stack      left: spread evenly, right: one per slot
+    ///   double-click      collect the same item onto the cursor
+    ///   1-9 over a slot   swap with that hotbar slot
+    ///   Q over a slot     drop one (Ctrl+Q: the stack)
+    ///   click outside     drop the cursor stack (right-click: one)
     ///
     /// While open, the player stops moving and the cursor is free.
     /// Clicks go through <see cref="PlayerInventory"/>, which predicts them
@@ -28,6 +34,14 @@ namespace GameUI
         private const int Columns = 9;
 
         private readonly List<ItemSlotUI> _slots = new List<ItemSlotUI>();
+        private readonly List<ItemSlotUI> _chestSlots = new List<ItemSlotUI>();
+        private readonly List<int> _dragSlots = new List<int>();
+        private GameObject _chestPanel;
+        private ItemSlotUI _hovered;
+        private int _dragButton = -1;
+        private int _lastClickSlot = -1;
+        private float _lastClickTime;
+        private int _spreadFrame = -1;
 
         private PlayerInventory _inventory;
         private RectTransform _canvasRect;
@@ -52,10 +66,11 @@ namespace GameUI
             _canvasRect = canvasRect;
 
             // Dim the game behind the panel; clicking outside the panel
-            // does nothing (the held stack stays on the cursor).
+            // drops the stack on the cursor.
             Image dim = UiBuilder.Image("Inventory", canvasRect, new Color(0f, 0f, 0f, 0.45f), raycast: true);
             UiBuilder.Stretch(dim.rectTransform);
             _root = dim.gameObject;
+            dim.gameObject.AddComponent<ClickCatcher>().Clicked += button => _inventory.DropHeld(oneItem: button == 1);
 
             InventoryContainer container = inventory.Container;
             int backpackRows = Mathf.CeilToInt((container.Count - container.HotbarSize) / (float)Columns);
@@ -76,7 +91,8 @@ namespace GameUI
 
             TextMeshProUGUI help = UiBuilder.Text("Help", panel.rectTransform, 16, TextAlignmentOptions.TopRight, UiBuilder.SubtleTextColor);
             UiBuilder.Place(help.rectTransform, new Vector2(1, 1), new Vector2(1, 1), new Vector2(-24, -24), new Vector2(520, 30));
-            help.text = "Click: move   Right-click: split   Shift-click: quick move";
+            help.text = "Shift-click: quick move   Drag: spread   Double-click: collect   1-9: to hotbar   Q: drop";
+            help.fontSize = 14;
 
             // Backpack grid.
             RectTransform backpack = CreateGrid("Backpack", panel.rectTransform, new Vector2(0, -70), backpackRows);
@@ -92,6 +108,9 @@ namespace GameUI
 
             for (int i = 0; i < container.HotbarSize; i++)
                 AddSlot(hotbar, i);
+
+            BuildChestPanel(dim.rectTransform, panelHeight, gridWidth);
+            inventory.ChestChanged += OnChestChanged;
 
             // Stack held on the cursor.
             _heldIcon = UiBuilder.Image("Held Item", canvasRect, Color.white);
@@ -120,6 +139,73 @@ namespace GameUI
             Refresh();
         }
 
+        private void BuildChestPanel(RectTransform parent, float inventoryHeight, float gridWidth)
+        {
+            int rows = Mathf.CeilToInt(Gameplay.ContainerLogic.ChestSize / (float)Columns);
+            float height = 64f + rows * SlotSize + (rows - 1) * Spacing + 70f;
+
+            Image panel = UiBuilder.Image("Chest", parent, UiBuilder.PanelColor, raycast: true);
+            UiBuilder.Place(panel.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0f), new Vector2(0, 20 + inventoryHeight * 0.5f + 12f), new Vector2(gridWidth + 48f, height));
+            UiBuilder.AddOutline(panel, new Color(0f, 0f, 0f, 0.6f), 3f);
+            _chestPanel = panel.gameObject;
+
+            TextMeshProUGUI title = UiBuilder.Text("Title", panel.rectTransform, 30, TextAlignmentOptions.TopLeft, UiBuilder.TextColor);
+            UiBuilder.Place(title.rectTransform, new Vector2(0, 1), new Vector2(0, 1), new Vector2(24, -14), new Vector2(300, 40));
+            title.text = "Chest";
+            title.fontStyle = FontStyles.Bold;
+
+            RectTransform grid = CreateGrid("Chest Slots", panel.rectTransform, new Vector2(0, -60), rows);
+            for (int i = 0; i < Gameplay.ContainerLogic.ChestSize; i++)
+            {
+                ItemSlotUI slot = ItemSlotUI.Create(grid, Gameplay.ContainerLogic.PlayerSlots + i, SlotSize, interactive: true);
+                slot.Clicked += OnSlotClicked;
+                slot.HoverChanged += OnSlotHover;
+                _chestSlots.Add(slot);
+            }
+
+            RectTransform buttons = UiBuilder.Rect("Buttons", panel.rectTransform);
+            UiBuilder.Place(buttons, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0, 14), new Vector2(gridWidth, 44));
+            var layout = buttons.gameObject.AddComponent<HorizontalLayoutGroup>();
+            layout.spacing = 10f;
+            layout.childControlWidth = true;
+            layout.childForceExpandWidth = true;
+            layout.childControlHeight = true;
+
+            MenuWidgets.Button(buttons, "Quick stack", () => _inventory.ChestCommand(Gameplay.ContainerLogic.Command.QuickStack), height: 44f);
+            MenuWidgets.Button(buttons, "Deposit all", () => _inventory.ChestCommand(Gameplay.ContainerLogic.Command.DepositAll), height: 44f);
+            MenuWidgets.Button(buttons, "Take all", () => _inventory.ChestCommand(Gameplay.ContainerLogic.Command.TakeAll), height: 44f);
+
+            _chestPanel.SetActive(false);
+        }
+
+        private void OnChestChanged(bool open)
+        {
+            if (open)
+            {
+                SetOpen(true);
+                _chestPanel.SetActive(true);
+            }
+            else
+            {
+                _chestPanel.SetActive(false);
+                if (IsOpen)
+                    SetOpen(false); // closing a chest closes the whole window, like Minecraft
+            }
+
+            Refresh();
+        }
+
+        /// <summary>The stack in a slot (inventory or chest).</summary>
+        private ItemStack StackAt(int index)
+        {
+            if (index < Gameplay.ContainerLogic.PlayerSlots)
+                return _inventory.Container[index];
+
+            InventoryContainer chest = _inventory.Chest;
+            int local = index - Gameplay.ContainerLogic.PlayerSlots;
+            return chest != null && local < chest.Count ? chest[local] : ItemStack.Empty;
+        }
+
         private void OnDestroy()
         {
             // The panel may already be destroyed with us; just make sure
@@ -144,7 +230,11 @@ namespace GameUI
             if (!open)
             {
                 _inventory.CloseInventory();
+                _inventory.CloseChest();
+                _chestPanel.SetActive(false);
                 _tooltip.gameObject.SetActive(false);
+                _dragButton = -1;
+                _dragSlots.Clear();
             }
 
             Refresh();
@@ -180,6 +270,12 @@ namespace GameUI
             {
                 FollowMouse(_heldIcon.rectTransform, Vector2.zero);
                 FollowMouse(_tooltip, new Vector2(18, -18));
+                HandleSlotKeys(keyboard);
+                HandleDrag();
+
+                // The chest contents change when the server says so.
+                if (_inventory.Chest != null)
+                    Refresh();
             }
         }
 
@@ -207,6 +303,73 @@ namespace GameUI
             _slots.Add(slot);
         }
 
+        /// <summary>1-9 over a slot swaps it with the hotbar; Q drops from it.</summary>
+        private void HandleSlotKeys(Keyboard keyboard)
+        {
+            if (keyboard == null || _hovered == null || !_hovered.IsHovered)
+                return;
+
+            Key[] keys = { Key.Digit1, Key.Digit2, Key.Digit3, Key.Digit4, Key.Digit5, Key.Digit6, Key.Digit7, Key.Digit8, Key.Digit9 };
+            for (int i = 0; i < keys.Length && i < _inventory.Container.HotbarSize; i++)
+            {
+                if (keyboard[keys[i]].wasPressedThisFrame)
+                {
+                    _inventory.SwapWithHotbar(_hovered.SlotIndex, i);
+                    Refresh();
+                }
+            }
+
+            if (keyboard.qKey.wasPressedThisFrame && _hovered.SlotIndex < Gameplay.ContainerLogic.PlayerSlots)
+            {
+                _inventory.DropFromSlot(_hovered.SlotIndex, keyboard.leftCtrlKey.isPressed || keyboard.rightCtrlKey.isPressed);
+                Refresh();
+            }
+        }
+
+        /// <summary>Holding a mouse button with a stack and moving over slots spreads it.</summary>
+        private void HandleDrag()
+        {
+            Mouse mouse = Mouse.current;
+            if (mouse == null)
+                return;
+
+            if (_dragButton < 0)
+            {
+                bool left = mouse.leftButton.wasPressedThisFrame, right = mouse.rightButton.wasPressedThisFrame;
+                if ((left || right) && !Held.IsEmpty && _hovered != null && _hovered.IsHovered)
+                {
+                    _dragButton = left ? 0 : 1;
+                    _dragSlots.Clear();
+                    _dragSlots.Add(_hovered.SlotIndex);
+                }
+
+                return;
+            }
+
+            bool released = _dragButton == 0 ? mouse.leftButton.wasReleasedThisFrame : mouse.rightButton.wasReleasedThisFrame;
+            if (released)
+                FinishDrag();
+        }
+
+        /// <summary>Ends a drag; true if it spread the stack (then the click is not used).</summary>
+        private bool FinishDrag()
+        {
+            int button = _dragButton;
+            _dragButton = -1;
+
+            if (_dragSlots.Count < 2)
+            {
+                _dragSlots.Clear();
+                return false;
+            }
+
+            _inventory.Spread(new List<int>(_dragSlots), oneEach: button == 1);
+            _dragSlots.Clear();
+            _spreadFrame = Time.frameCount;
+            Refresh();
+            return true;
+        }
+
         private void OnSlotClicked(ItemSlotUI slot, PointerEventData eventData)
         {
             Keyboard keyboard = Keyboard.current;
@@ -219,6 +382,25 @@ namespace GameUI
             if (button < 0)
                 return;
 
+            // The release that ended a drag is not also a click.
+            if (_spreadFrame == Time.frameCount || (_dragButton >= 0 && FinishDrag()))
+                return;
+            _dragButton = -1;
+            _dragSlots.Clear();
+
+            // Double-click with a stack on the cursor: gather the same item.
+            bool doubleClick = button == 0 && !shift && slot.SlotIndex == _lastClickSlot && Time.unscaledTime - _lastClickTime < 0.3f;
+            _lastClickSlot = button == 0 ? slot.SlotIndex : -1;
+            _lastClickTime = Time.unscaledTime;
+
+            if (doubleClick && !Held.IsEmpty)
+            {
+                _inventory.CollectToCursor(slot.SlotIndex);
+                _lastClickSlot = -1;
+                Refresh();
+                return;
+            }
+
             _inventory.Click(slot.SlotIndex, button, shift);
 
             Refresh();
@@ -227,10 +409,18 @@ namespace GameUI
 
         private void OnSlotHover(ItemSlotUI slot)
         {
+            if (slot.IsHovered)
+            {
+                _hovered = slot;
+
+                if (_dragButton >= 0 && !_dragSlots.Contains(slot.SlotIndex))
+                    _dragSlots.Add(slot.SlotIndex);
+            }
+
             if (_tooltip == null)
                 return;
 
-            ItemStack stack = slot.IsHovered ? _inventory.Container[slot.SlotIndex] : ItemStack.Empty;
+            ItemStack stack = slot.IsHovered ? StackAt(slot.SlotIndex) : ItemStack.Empty;
 
             if (stack.IsEmpty || !Held.IsEmpty)
             {
@@ -256,6 +446,9 @@ namespace GameUI
 
             foreach (ItemSlotUI slot in _slots)
                 slot.SetStack(_inventory.Container[slot.SlotIndex]);
+
+            foreach (ItemSlotUI slot in _chestSlots)
+                slot.SetStack(StackAt(slot.SlotIndex));
 
             ItemStack held = Held;
 
@@ -291,6 +484,21 @@ namespace GameUI
 
             rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.5f);
             rect.anchoredPosition = local + offset;
+        }
+    }
+
+    /// <summary>Reports clicks on the dimmed background (outside the panels).</summary>
+    public sealed class ClickCatcher : MonoBehaviour, IPointerClickHandler
+    {
+        public event System.Action<int> Clicked;
+
+        public void OnPointerClick(PointerEventData eventData)
+        {
+            // Only clicks on this object itself, not on panels above it.
+            if (eventData.pointerPressRaycast.gameObject != gameObject)
+                return;
+
+            Clicked?.Invoke(eventData.button == PointerEventData.InputButton.Right ? 1 : 0);
         }
     }
 }

@@ -19,7 +19,7 @@ namespace Gameplay
         private static readonly BlockId[] StarterBlocks =
         {
             BlockId.Grass, BlockId.Dirt, BlockId.Stone, BlockId.Sand,
-            BlockId.Log, BlockId.Leaves, BlockId.Sandstone, BlockId.AutumnLeaves, BlockId.Snow
+            BlockId.Log, BlockId.Leaves, BlockId.Sandstone, BlockId.AutumnLeaves, BlockId.Snow, BlockId.Chest
         };
 
         public static InventoryContainer CreateContainer()

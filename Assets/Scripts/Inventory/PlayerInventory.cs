@@ -49,6 +49,13 @@ namespace Items
 
         public InventoryContainer Container { get; private set; }
 
+        /// <summary>The open chest's contents as the server last sent them (null = no chest open).</summary>
+        public InventoryContainer Chest { get; private set; }
+        public Vector3Int ChestPosition { get; private set; }
+
+        /// <summary>A chest window was opened or closed by the server.</summary>
+        public event Action<bool> ChestChanged;
+
         /// <summary>Stack currently held on the cursor in the inventory screen.</summary>
         public ItemStack Held => _held;
 
@@ -79,7 +86,10 @@ namespace Items
         private void OnDestroy()
         {
             if (_network != null)
+            {
                 _network.InventorySnapshotReceived -= OnSnapshot;
+                _network.ContainerChanged -= OnContainer;
+            }
 
             if (Local == this)
             {
@@ -138,6 +148,7 @@ namespace Items
             {
                 // Filled by the server's snapshot.
                 _network.InventorySnapshotReceived += OnSnapshot;
+                _network.ContainerChanged += OnContainer;
 
                 if (_network.HasSnapshot)
                     OnSnapshot(_network.LastAcknowledged, _network.LastHotbarSize, _network.LastSlots, _network.LastHeld);
@@ -163,9 +174,88 @@ namespace Items
         // Actions
         // ------------------------------------------------------------
 
-        public void Click(int slot, int button, bool shift)
+        public void Click(int slot, int button, bool shift) => PerformInventory(PlayerAction.Click(slot, button, shift));
+
+        public void Spread(IReadOnlyList<int> slots, bool oneEach) => PerformInventory(PlayerAction.Spread(slots, oneEach));
+
+        public void CollectToCursor(int slot) => PerformInventory(PlayerAction.CollectToCursor(slot));
+
+        public void SwapWithHotbar(int slot, int hotbarIndex) => PerformInventory(PlayerAction.SwapWithHotbar(slot, hotbarIndex));
+
+        public void DropHeld(bool oneItem)
         {
-            Perform(PlayerAction.Click(slot, button, shift));
+            if (_held.IsEmpty)
+                return;
+
+            if (!IsNetworked)
+            {
+                GameHud.Instance?.ShowMessage("Dropping items needs a game (Host Game).");
+                return;
+            }
+
+            PerformInventory(PlayerAction.DropCursor(oneItem));
+        }
+
+        public void ChestCommand(ContainerLogic.Command command)
+        {
+            if (Chest != null)
+                PerformInventory(PlayerAction.ChestCommand(command));
+        }
+
+        /// <summary>Asks the server to open the chest at a block (its contents arrive as a snapshot).</summary>
+        public void OpenChest(Vector3Int position)
+        {
+            if (!IsNetworked)
+            {
+                GameHud.Instance?.ShowMessage("Chests need a game (Host Game).");
+                return;
+            }
+
+            Perform(PlayerAction.OpenChest(position));
+        }
+
+        public void CloseChest()
+        {
+            if (Chest == null)
+                return;
+
+            Chest = null;
+            Perform(PlayerAction.CloseChest());
+            ChestChanged?.Invoke(false);
+        }
+
+        /// <summary>
+        /// Inventory actions are predicted (applied at once) except while a
+        /// chest is open: then the server's snapshots show the result
+        /// (a few milliseconds later on a LAN).
+        /// </summary>
+        private void PerformInventory(PlayerAction action)
+        {
+            action.NotPredicted = Chest != null;
+            Perform(action);
+        }
+
+        private void OnContainer(bool open, Vector3Int position, ItemStack[] slots)
+        {
+            if (!open)
+            {
+                if (Chest != null)
+                {
+                    Chest = null;
+                    ChestChanged?.Invoke(false);
+                }
+                return;
+            }
+
+            bool opened = Chest == null;
+            if (Chest == null || Chest.Count != slots.Length)
+                Chest = new InventoryContainer(Math.Max(1, slots.Length), 0);
+
+            ChestPosition = position;
+            Chest.SetAll(slots);
+
+            if (opened)
+                ChestChanged?.Invoke(true);
         }
 
         /// <summary>Called when the inventory screen closes: returns the held stack.</summary>
@@ -294,12 +384,35 @@ namespace Items
 
         private void ApplyInventoryEffect(PlayerAction action)
         {
+            if (action.NotPredicted)
+                return;
+
             ItemStack heldBefore = _held;
 
             switch (action.Type)
             {
                 case PlayerActionType.InventoryClick:
-                    InventoryLogic.Click(Container, ref _held, action.Slot, action.Button, action.Shift);
+                    ContainerLogic.Click(Container, null, ref _held, action.Slot, action.Button, action.Shift);
+                    break;
+
+                case PlayerActionType.InventorySpread:
+                    var slots = new List<int>();
+                    if (action.Slots != null)
+                        foreach (byte slot in action.Slots)
+                            slots.Add(slot);
+                    ContainerLogic.Spread(Container, null, ref _held, slots, action.Button == 1);
+                    break;
+
+                case PlayerActionType.InventoryCollect:
+                    ContainerLogic.Collect(Container, null, ref _held, action.Slot);
+                    break;
+
+                case PlayerActionType.InventorySwap:
+                    ContainerLogic.SwapWithHotbar(Container, null, action.Slot, action.Button);
+                    break;
+
+                case PlayerActionType.DropHeld:
+                    _held = _held.WithCount(action.Button == 1 ? _held.Count - 1 : 0);
                     break;
 
                 case PlayerActionType.InventoryClose:

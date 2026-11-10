@@ -39,6 +39,10 @@ namespace World.Saving
         public Dictionary<string, PlayerSaveData> Players =
             new Dictionary<string, PlayerSaveData>();
 
+        /// <summary>Chest contents by block position (format 3+).</summary>
+        public Dictionary<UnityEngine.Vector3Int, List<(string ItemId, int Count)>> Chests =
+            new Dictionary<UnityEngine.Vector3Int, List<(string, int)>>();
+
         public int EditCount
         {
             get
@@ -69,7 +73,8 @@ namespace World.Saving
         public const string FileName = "world.frs";
         private const uint Magic = 0x56535246; // "FRSV"
         // 1: first version. 2: player progress (class, level, skills, quests).
-        public const ushort FormatVersion = 2;
+        // 3: chests.
+        public const ushort FormatVersion = 3;
 
         public static void Write(string path, WorldSaveData data)
         {
@@ -207,6 +212,20 @@ namespace World.Saving
 
                 writer.Write(player.Value.Progress ?? string.Empty);
             }
+
+            writer.Write(data.Chests.Count);
+            foreach (KeyValuePair<UnityEngine.Vector3Int, List<(string ItemId, int Count)>> chest in data.Chests)
+            {
+                writer.Write(chest.Key.x);
+                writer.Write(chest.Key.y);
+                writer.Write(chest.Key.z);
+                writer.Write(chest.Value.Count);
+                foreach ((string itemId, int count) in chest.Value)
+                {
+                    writer.Write(itemId ?? string.Empty);
+                    writer.Write(count);
+                }
+            }
         }
 
         private static WorldSaveData ReadBody(BinaryReader reader, ushort version)
@@ -257,6 +276,24 @@ namespace World.Saving
                     player.Progress = reader.ReadString();
 
                 data.Players[id] = player;
+            }
+
+            if (version >= 3)
+            {
+                int chestCount = Count(reader.ReadInt32());
+                for (int c = 0; c < chestCount; c++)
+                {
+                    var position = new UnityEngine.Vector3Int(reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32());
+                    int slotCount = Count(reader.ReadInt32());
+                    var slots = new List<(string, int)>(slotCount);
+                    for (int s = 0; s < slotCount; s++)
+                    {
+                        string itemId = reader.ReadString();
+                        int count = reader.ReadInt32();
+                        slots.Add((itemId.Length == 0 ? null : itemId, count));
+                    }
+                    data.Chests[position] = slots;
+                }
             }
 
             return data;

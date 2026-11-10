@@ -74,6 +74,16 @@ namespace Networking
             _router.Register(NetworkMessageType.TimeSync, OnTimeSync);
             _router.Register(NetworkMessageType.PlayerStatus, OnStatus);
             _router.Register(NetworkMessageType.PlayerEffects, OnEffects);
+            _router.Register(NetworkMessageType.ContainerSnapshot, OnContainer);
+        }
+
+        /// <summary>(open, chest position, contents) - a chest window opened, changed or closed.</summary>
+        public event Action<bool, Vector3Int, ItemStack[]> ContainerChanged;
+
+        private void OnContainer(byte[] payload)
+        {
+            if (GameplayMessages.TryReadContainer(payload, out bool open, out Vector3Int position, out ItemStack[] slots))
+                ContainerChanged?.Invoke(open, position, slots);
         }
 
         /// <summary>This player's health, mana, level, class, skills and quests (from the server).</summary>
@@ -203,6 +213,7 @@ namespace Networking
             _router.Unregister(NetworkMessageType.TimeSync, OnTimeSync);
             _router.Unregister(NetworkMessageType.PlayerStatus, OnStatus);
             _router.Unregister(NetworkMessageType.PlayerEffects, OnEffects);
+            _router.Unregister(NetworkMessageType.ContainerSnapshot, OnContainer);
         }
 
         private void OnBlockChanged(byte[] payload)

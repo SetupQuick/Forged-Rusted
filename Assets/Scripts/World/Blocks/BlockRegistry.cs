@@ -174,6 +174,7 @@ namespace World.Blocks
             Register(Simple(BlockId.Gravel, "Gravel", C(0x958C83), 0.16f));
             Register(Simple(BlockId.Clay, "Clay", C(0xA4A9B6), 0.06f));
             Register(Simple(BlockId.Snow, "Snow", C(0xF2F6FC), 0.035f));
+            Register(Simple(BlockId.Chest, "Chest", C(0xA06A35), 0.05f));
 
             Register(new BlockDefinition(
                 BlockId.Ice, "Ice", true, true, false,

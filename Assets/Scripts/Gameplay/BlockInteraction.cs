@@ -244,6 +244,14 @@ namespace Gameplay
 
         private void TryPlace(WorldManager world)
         {
+            // Right-clicking a chest opens it instead of placing against it.
+            if (Target.Block == BlockId.Chest)
+            {
+                _inventory.OpenChest(Target.Voxel);
+                _placeCooldown = 0.5f;
+                return;
+            }
+
             VoxelHit hit = Target;
 
             // Clicking grass/flowers replaces them; otherwise place against the face.

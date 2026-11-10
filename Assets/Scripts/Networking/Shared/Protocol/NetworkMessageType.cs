@@ -45,6 +45,9 @@ namespace Networking
         PlayerStatus = 21,
 
         // Server -> clients: visible effects of a player (invisible).
-        PlayerEffects = 22
+        PlayerEffects = 22,
+
+        // Server -> players viewing a chest: its contents (or that it closed).
+        ContainerSnapshot = 23
     }
 }

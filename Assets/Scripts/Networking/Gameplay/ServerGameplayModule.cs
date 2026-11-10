@@ -61,6 +61,10 @@ namespace Networking
             public Gameplay.PlayerProgress Progress = new Gameplay.PlayerProgress();
             public bool BroadcastInvisible;
 
+            // Chest window (Containers.cs).
+            public bool ChestOpen;
+            public Vector3Int ChestPosition;
+
             // Block being hit and when that started (server time), for break timing.
             public Vector3Int BreakingVoxel;
             public double BreakingSince = -1;
@@ -240,6 +244,7 @@ namespace Networking
             }
 
             TickSurvival((float)deltaTime);
+            TickChests();
 
             if (now >= _nextTimeSync)
             {
@@ -397,11 +402,45 @@ namespace Networking
             switch (action.Type)
             {
                 case PlayerActionType.InventoryClick:
-                    InventoryLogic.Click(state.Inventory, ref state.Held, action.Slot, action.Button, action.Shift);
+                    ContainerLogic.Click(state.Inventory, OpenChestOf(state), ref state.Held, action.Slot, action.Button, action.Shift);
+                    ChestChanged(state);
                     break;
 
                 case PlayerActionType.InventoryClose:
                     InventoryLogic.Close(state.Inventory, ref state.Held);
+                    CloseChest(state, notify: false);
+                    break;
+
+                case PlayerActionType.InventorySpread:
+                    ContainerLogic.Spread(state.Inventory, OpenChestOf(state), ref state.Held, ToSlots(action.Slots), action.Button == 1);
+                    ChestChanged(state);
+                    break;
+
+                case PlayerActionType.InventoryCollect:
+                    ContainerLogic.Collect(state.Inventory, OpenChestOf(state), ref state.Held, action.Slot);
+                    ChestChanged(state);
+                    break;
+
+                case PlayerActionType.InventorySwap:
+                    ContainerLogic.SwapWithHotbar(state.Inventory, OpenChestOf(state), action.Slot, action.Button);
+                    ChestChanged(state);
+                    break;
+
+                case PlayerActionType.DropHeld:
+                    TryDropHeld(state, action.Button == 1);
+                    break;
+
+                case PlayerActionType.OpenContainer:
+                    TryOpenChest(state, action.Position);
+                    break;
+
+                case PlayerActionType.CloseContainer:
+                    CloseChest(state, notify: false);
+                    break;
+
+                case PlayerActionType.ContainerCommand:
+                    ContainerLogic.RunCommand(state.Inventory, OpenChestOf(state), (ContainerLogic.Command)action.Button);
+                    ChestChanged(state);
                     break;
 
                 case PlayerActionType.StartBreak:
@@ -476,6 +515,8 @@ namespace Networking
             }
 
             state.BreakingSince = -1;
+            if (block == BlockId.Chest)
+                SpillChest(voxel);
             _world.SetBlock(voxel, BlockId.Air);
             InventoryLogic.AddDrop(state.Inventory, block, tool);
 

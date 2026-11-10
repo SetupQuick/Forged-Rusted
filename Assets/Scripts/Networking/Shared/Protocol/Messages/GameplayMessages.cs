@@ -94,6 +94,35 @@ namespace Networking
                     writer.Write(action.Target);
                     break;
 
+                case PlayerActionType.InventorySpread:
+                    writer.Write(action.Button);
+                    writer.Write((byte)(action.Slots?.Length ?? 0));
+                    if (action.Slots != null)
+                        foreach (byte slot in action.Slots)
+                            writer.Write(slot);
+                    break;
+
+                case PlayerActionType.InventoryCollect:
+                    writer.Write(action.Slot);
+                    break;
+
+                case PlayerActionType.InventorySwap:
+                    writer.Write(action.Slot);
+                    writer.Write(action.Button);
+                    break;
+
+                case PlayerActionType.DropHeld:
+                case PlayerActionType.ContainerCommand:
+                    writer.Write(action.Button);
+                    break;
+
+                case PlayerActionType.OpenContainer:
+                    WritePosition(writer, action.Position);
+                    break;
+
+                case PlayerActionType.CloseContainer:
+                    break;
+
                 case PlayerActionType.DropItem:
                     writer.Write(action.Slot);
                     writer.Write(action.Button);
@@ -149,6 +178,39 @@ namespace Networking
 
                     case PlayerActionType.Attack:
                         action.Target = reader.ReadUInt32();
+                        break;
+
+                    case PlayerActionType.InventorySpread:
+                    {
+                        action.Button = reader.ReadByte();
+                        int count = reader.ReadByte();
+                        if (count > 64)
+                            return false;
+                        action.Slots = new byte[count];
+                        for (int i = 0; i < count; i++)
+                            action.Slots[i] = reader.ReadByte();
+                        break;
+                    }
+
+                    case PlayerActionType.InventoryCollect:
+                        action.Slot = reader.ReadByte();
+                        break;
+
+                    case PlayerActionType.InventorySwap:
+                        action.Slot = reader.ReadByte();
+                        action.Button = reader.ReadByte();
+                        break;
+
+                    case PlayerActionType.DropHeld:
+                    case PlayerActionType.ContainerCommand:
+                        action.Button = reader.ReadByte();
+                        break;
+
+                    case PlayerActionType.OpenContainer:
+                        action.Position = ReadPosition(reader);
+                        break;
+
+                    case PlayerActionType.CloseContainer:
                         break;
 
                     case PlayerActionType.DropItem:
@@ -425,6 +487,43 @@ namespace Networking
         {
             value = value ?? string.Empty;
             return value.Length > length ? value.Substring(0, length) : value;
+        }
+
+        // --------------------------------------------------------------
+        // Container contents (server -> players viewing a chest)
+        // --------------------------------------------------------------
+
+        public static void WriteContainer(PacketWriter writer, bool open, Vector3Int position, ItemStack[] slots)
+        {
+            writer.Write(open);
+            WritePosition(writer, position);
+            writer.Write((byte)(slots?.Length ?? 0));
+            if (slots != null)
+                foreach (ItemStack stack in slots)
+                    WriteStack(writer, stack);
+        }
+
+        public static bool TryReadContainer(byte[] payload, out bool open, out Vector3Int position, out ItemStack[] slots)
+        {
+            open = false;
+            position = default;
+            slots = null;
+
+            try
+            {
+                var reader = new PacketReader(payload);
+                open = reader.ReadBool();
+                position = ReadPosition(reader);
+                int count = reader.ReadByte();
+                slots = new ItemStack[count];
+                for (int i = 0; i < count; i++)
+                    slots[i] = ReadStack(reader);
+                return reader.Remaining == 0;
+            }
+            catch (System.InvalidOperationException)
+            {
+                return false;
+            }
         }
 
         private static void WriteStack(PacketWriter writer, ItemStack stack)

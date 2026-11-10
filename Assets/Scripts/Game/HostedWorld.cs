@@ -40,7 +40,9 @@ namespace Game
                 return;
 
             gameplay.ImportPlayers(saver.Loaded?.Players);
+            gameplay.ImportChests(saver.Loaded?.Chests);
             saver.CollectPlayers = () => gameplay.ExportPlayers();
+            saver.CollectChests = () => gameplay.ExportChests();
             saver.PlayersVersion = () => gameplay.PlayersVersion;
 
             // Read inventories while the server still exists.
@@ -59,6 +61,7 @@ namespace Game
 
             saver.Close();
             saver.CollectPlayers = null;
+            saver.CollectChests = null;
             saver.PlayersVersion = null;
             Detach();
         }
