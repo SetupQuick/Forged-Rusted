@@ -314,6 +314,7 @@ namespace Game
                 CpuMs = (float)(_cpuSum / samples),
                 GpuMs = (float)(_gpuSum / samples),
                 Triangles = _triangleSum / samples,
+                // Only counted in development builds (0 in release players).
                 DrawCalls = _drawSum / samples,
                 SetPassCalls = _setPassSum / samples,
                 LoadSeconds = loadSeconds,
@@ -332,15 +333,16 @@ namespace Game
             var text = new StringBuilder();
             text.AppendLine($"{SystemInfo.processorType} ({SystemInfo.processorCount} threads), {SystemInfo.graphicsDeviceName}, {Screen.width}x{Screen.height}");
             text.AppendLine();
-            text.AppendLine("Preset    Avg FPS   1% low   Frame ms (avg/99%/worst)   CPU ms   GPU ms   Triangles   Draws   Load s");
+            text.AppendLine("Preset    Avg FPS   1% low   Frame ms (avg/99%/worst)   CPU ms   GPU ms   Triangles   Draws   SetPass   Load s");
 
             foreach (Result r in _results)
             {
                 text.AppendLine(string.Format(CultureInfo.InvariantCulture,
-                    "{0,-8} {1,8:0} {2,8:0}   {3,6:0.0} / {4,5:0.0} / {5,5:0.0}        {6,6:0.0}   {7,6}   {8,8:0.00}M   {9,5}   {10,6:0.0}",
+                    "{0,-8} {1,8:0} {2,8:0}   {3,6:0.0} / {4,5:0.0} / {5,5:0.0}        {6,6:0.0}   {7,6}   {8,8:0.00}M   {9,5}   {10,7}   {11,6:0.0}",
                     r.Name, r.AverageFps, r.OnePercentLowFps, r.AverageMs, r.P99Ms, r.WorstMs,
                     r.CpuMs, r.GpuMs > 0 ? r.GpuMs.ToString("0.0", CultureInfo.InvariantCulture) : "n/a",
-                    r.Triangles / 1e6, r.DrawCalls, r.LoadSeconds));
+                    r.Triangles / 1e6, r.DrawCalls > 0 ? r.DrawCalls.ToString(CultureInfo.InvariantCulture) : "n/a",
+                    r.SetPassCalls, r.LoadSeconds));
             }
 
             text.AppendLine();
